@@ -1,0 +1,9 @@
+gradio
+pandas
+openai
+requests
+fastapi
+uvicorn[standard]
+python-multipart
+openpyxl
+xlrd
