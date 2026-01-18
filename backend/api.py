@@ -11,12 +11,14 @@ import uuid
 from typing import List, Optional, Dict
 from datetime import datetime
 
-from llm_service import DeepSeekLLM
+from llm_service import DeepSeekLLM, LLMService
 from data_model import default_store, Product
 from agents import ProductSelectionAgent, MarketingCopyAgent
+from agents.rag_product_selection import RAGProductSelectionAgent
+from rag.vector_store import VectorStore
 
 # 初始化 FastAPI
-app = FastAPI(title="AI Agent E-Commerce API", version="1.0")
+app = FastAPI(title="AI Agent E-Commerce API", version="2.0")
 
 # 配置 CORS
 app.add_middleware(
@@ -31,6 +33,55 @@ app.add_middleware(
 llm = DeepSeekLLM()
 selection_agent = ProductSelectionAgent(default_store, llm)
 copy_agent = MarketingCopyAgent(llm)
+
+# 初始化RAG服务（延迟加载）
+rag_vector_store = None
+rag_agent = None
+
+def init_rag_services():
+    """初始化RAG服务"""
+    global rag_vector_store, rag_agent
+
+    if rag_vector_store is None:
+        try:
+            # 创建向量存储
+            rag_vector_store = VectorStore(collection_name="products")
+
+            # 添加产品
+            products = default_store.list_products()
+            products_dict = []
+            for p in products:
+                products_dict.append({
+                    "product_id": p.product_id,
+                    "title_en": p.title_en,
+                    "category": p.category,
+                    "price_usd": p.price_usd,
+                    "avg_rating": p.avg_rating,
+                    "monthly_sales": p.monthly_sales,
+                    "main_market": p.main_market,
+                    "tags": p.tags,
+                })
+
+            # 检查是否已有数据
+            if rag_vector_store.get_product_count() == 0:
+                rag_vector_store.add_products(products_dict)
+
+            # 创建RAG Agent
+            llm_service = LLMService(provider="deepseek")
+            rag_agent = RAGProductSelectionAgent(
+                store=default_store,
+                llm=llm_service,
+                vector_store=rag_vector_store,
+            )
+
+            print("[RAG] Services initialized successfully")
+            return True
+
+        except Exception as e:
+            print(f"[RAG] Initialization failed: {e}")
+            return False
+
+    return True
 
 # --- Pydantic Models ---
 
@@ -84,6 +135,18 @@ class FileAnalysisResponse(BaseModel):
     summary: str
     data_preview: dict
     column_info: dict
+
+# RAG相关模型
+class RAGSelectionRequest(BaseModel):
+    campaign_description: str
+    target_market: Optional[str] = None
+    top_k: int = 3
+    use_reranking: bool = True
+
+class RAGSelectionResponse(BaseModel):
+    products: List[ProductDetail]
+    explanation: str
+    metadata: dict
 
 # --- 存储上传的数据（临时，实际应用中应使用数据库或缓存）
 uploaded_data_store = {}
@@ -383,6 +446,137 @@ def delete_uploaded_file(filename: str):
         return {"message": f"文件 {filename} 已删除"}
     else:
         raise HTTPException(status_code=404, detail="文件不存在")
+
+# ==================== RAG相关端点 ====================
+
+@app.get("/rag/status")
+def get_rag_status():
+    """获取RAG服务状态"""
+    is_initialized = rag_vector_store is not None
+    product_count = 0
+    if is_initialized and rag_vector_store:
+        product_count = rag_vector_store.get_product_count()
+
+    return {
+        "initialized": is_initialized,
+        "product_count": product_count,
+        "vector_db_path": "chroma_db" if is_initialized else None,
+    }
+
+@app.post("/rag/recommend", response_model=RAGSelectionResponse)
+def rag_recommend_products(req: RAGSelectionRequest):
+    """
+    使用RAG进行智能推荐
+
+    与传统推荐的区别：
+    1. 使用语义搜索理解查询意图
+    2. 结合向量相似度和启发式评分
+    3. 返回详细的元数据
+    """
+    # 确保RAG服务已初始化
+    if not init_rag_services():
+        raise HTTPException(status_code=500, detail="RAG服务初始化失败")
+
+    try:
+        # 调用RAG Agent
+        products, explanation, metadata = rag_agent.recommend_products(
+            campaign_description=req.campaign_description,
+            target_market=req.target_market,
+            top_k=req.top_k,
+        )
+
+        # 转换为Pydantic模型
+        product_details = []
+        for p in products:
+            product_details.append(ProductDetail(
+                product_id=p.product_id,
+                title_en=p.title_en,
+                category=p.category,
+                price_usd=p.price_usd,
+                avg_rating=p.avg_rating,
+                monthly_sales=p.monthly_sales,
+                main_market=p.main_market,
+                tags=p.tags
+            ))
+
+        return RAGSelectionResponse(
+            products=product_details,
+            explanation=explanation,
+            metadata=metadata
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/rag/compare")
+def compare_recommendations(req: SelectionRequest):
+    """
+    对比传统方法和RAG方法的推荐结果
+
+    返回两种方法的推荐，便于比较效果
+    """
+    # 确保RAG服务已初始化
+    init_rag_services()
+
+    try:
+        # 传统方法
+        traditional_products, traditional_explanation = selection_agent.recommend_products(
+            campaign_description=req.campaign_description,
+            target_market=req.target_market,
+            top_k=req.top_k
+        )
+
+        # RAG方法
+        if rag_agent:
+            rag_products, rag_explanation, rag_metadata = rag_agent.recommend_products(
+                campaign_description=req.campaign_description,
+                target_market=req.target_market,
+                top_k=req.top_k,
+            )
+        else:
+            rag_products, rag_explanation, rag_metadata = [], "RAG not available", {}
+
+        # 转换产品格式
+        def convert_products(products):
+            return [
+                ProductDetail(
+                    product_id=p.product_id,
+                    title_en=p.title_en,
+                    category=p.category,
+                    price_usd=p.price_usd,
+                    avg_rating=p.avg_rating,
+                    monthly_sales=p.monthly_sales,
+                    main_market=p.main_market,
+                    tags=p.tags
+                )
+                for p in products
+            ]
+
+        return {
+            "traditional": {
+                "products": convert_products(traditional_products),
+                "explanation": traditional_explanation,
+                "method": "heuristic_scoring"
+            },
+            "rag": {
+                "products": convert_products(rag_products),
+                "explanation": rag_explanation,
+                "method": rag_metadata.get("method", "unknown"),
+                "metadata": rag_metadata
+            }
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/rag/initialize")
+def initialize_rag():
+    """手动初始化RAG服务"""
+    success = init_rag_services()
+    if success:
+        return {"message": "RAG服务初始化成功"}
+    else:
+        raise HTTPException(status_code=500, detail="RAG服务初始化失败")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)

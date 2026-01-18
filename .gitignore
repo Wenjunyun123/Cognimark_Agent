@@ -34,6 +34,20 @@ temp_repo/
 *.tmp
 *.bak
 
+# 测试文件
+test_*.py
+*_test.py
+tests/
+__tests__/
+*.test.ts
+*.test.tsx
+*.spec.ts
+*.spec.tsx
+
+
+
+
+
 
 
 
