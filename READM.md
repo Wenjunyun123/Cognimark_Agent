@@ -7,7 +7,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-ISC-green.svg)](LICENSE)
 
-## 📋 项目简介
+## 📋 项目简介.
 
 这是一个展示 AI Agent 在跨境电商领域应用的完整系统，包含智能选品推荐和营销文案生成两大核心功能。
 
