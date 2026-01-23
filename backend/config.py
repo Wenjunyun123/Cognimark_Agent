@@ -9,7 +9,7 @@ import os
 # ==================== DeepSeek 配置 ====================
 DEEPSEEK_API_KEY = os.getenv(
     "DEEPSEEK_API_KEY",
-    "请替换为实际API Key"  # 请替换为实际API Key
+    ""  # 请设置环境变量DEEPSEEK_API_KEY
 )
 DEEPSEEK_BASE_URL = os.getenv(
     "DEEPSEEK_BASE_URL",
