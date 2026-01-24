@@ -461,32 +461,53 @@ async def chat_with_agent_stream(req: ChatRequest):
 
                 with get_db_context() as session:
                     # 检测用户查询是否与课程相关
-                    keywords = ['课程', '资源', '教程', '商品', '产品', 'database', '数据', '有哪些']
+                    keywords = ['课程', '资源', '教程', '商品', '产品', 'database', '数据', '有哪些', '黑马', '搜索', '查找']
                     is_course_query = any(kw in user_message.lower() for kw in keywords)
 
                     if is_course_query:
-                        # 获取课程统计
+                        # 尝试从用户消息中提取关键词
+                        search_keyword = None
+                        for kw in ['黑马', 'java', 'python', '前端', '运维', 'ai', '人工智能', '开发']:
+                            if kw in user_message.lower():
+                                search_keyword = kw
+                                break
+
+                        # 查询课程数据
+                        query = session.query(ProductDB).filter(
+                            ProductDB.external_id.isnot(None)
+                        )
+
+                        # 如果有特定关键词，进行筛选
+                        if search_keyword:
+                            query = query.filter(ProductDB.title_zh.contains(search_keyword))
+                            # 限制返回数量，避免上下文过长
+                            courses = query.order_by(ProductDB.created_at.desc()).limit(50).all()
+                        else:
+                            # 没有特定关键词时，返回所有课程（用于"列出所有"类查询）
+                            # 但为了上下文长度考虑，限制返回数量
+                            courses = query.order_by(ProductDB.created_at.desc()).limit(100).all()
+
                         total = session.query(ProductDB).filter(
                             ProductDB.external_id.isnot(None)
                         ).count()
 
-                        # 获取最近几条课程作为示例
-                        recent_courses = session.query(ProductDB).filter(
-                            ProductDB.external_id.isnot(None)
-                        ).order_by(ProductDB.created_at.desc()).limit(5).all()
-
                         database_context = f"\n\n【数据库课程数据】\n"
                         database_context += f"- 总计: {total} 条课程记录\n"
+                        if search_keyword:
+                            database_context += f"- 筛选关键词: {search_keyword}\n"
+                        database_context += f"- 返回结果: {len(courses)} 条\n"
+                        database_context += f"\n课程列表 (名称 | 链接):\n"
 
-                        if recent_courses:
-                            database_context += f"- 最新课程示例:\n"
-                            for c in recent_courses:
-                                title = c.title_zh[:40] + "..." if c.title_zh and len(c.title_zh) > 40 else c.title_zh
-                                database_context += f"  · {title}\n"
+                        for c in courses:
+                            title = c.title_zh or c.title_en or "未知"
+                            url = c.resource_url or "无链接"
+                            database_context += f"  · {title}\n    链接: {url}\n"
 
             except Exception as e:
                 # 如果查询失败，不影响正常对话
-                pass
+                import traceback
+                print(f"数据库查询错误: {e}")
+                traceback.print_exc()
 
             # 构建 LLM 历史上下文
             llm_history = []
