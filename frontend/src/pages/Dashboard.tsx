@@ -1,6 +1,6 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Send, Copy, ThumbsUp, Loader2, Sparkles, Search, Image as ImageIcon, FileText, Plus, ChevronDown, Globe, TrendingUp, Package, BarChart3, Upload, X, FileSpreadsheet } from 'lucide-react';
+import { Send, Copy, ThumbsUp, Loader2, Sparkles, Search, Image as ImageIcon, FileText, Plus, ChevronDown, Globe, TrendingUp, Package, BarChart3, Upload, X, FileSpreadsheet, ArrowDown } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { chatWithAgent, getProducts, uploadExcel, getUploadedFiles, deleteUploadedFile, UploadedFile } from '../services/api';
@@ -15,7 +15,7 @@ interface Message {
 }
 
 export default function Dashboard() {
-  const [messages, setMessages] = useState<Message[]>([]); 
+  const [messages, setMessages] = useState<Message[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [greeting, setGreeting] = useState('');
@@ -28,9 +28,11 @@ export default function Dashboard() {
   const [showModeMenu, setShowModeMenu] = useState(false);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
+  const [autoScroll, setAutoScroll] = useState(true); // 控制自动滚动
   const modeMenuRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null); // 新增：消息末尾引用
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -40,10 +42,15 @@ export default function Dashboard() {
     else if (hour < 11) setGreeting('上午好');
     else if (hour < 18) setGreeting('下午好');
     else setGreeting('晚上好');
-    
-    loadProducts();
-    loadUploadedFiles();
-    loadSession();
+
+    // CRITICAL FIX: 并行执行异步操作，避免瀑布效应 (async-parallel)
+    Promise.all([
+      loadProducts(),
+      loadUploadedFiles(),
+      loadSession()
+    ]).catch(err => {
+      console.error('Error loading initial data:', err);
+    });
   }, [location.search]);
 
   // 点击外部关闭模式菜单
@@ -190,11 +197,69 @@ export default function Dashboard() {
     }
   }, [location.search]);
 
+  // OPTIMIZATION: 改进的自动滚动逻辑，支持平滑滚动和用户手动控制
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if (!autoScroll) return;
+
+    const scrollToBottom = () => {
+      if (messagesEndRef.current) {
+        messagesEndRef.current.scrollIntoView({
+          behavior: 'smooth',
+          block: 'end'
+        });
+      }
+    };
+
+    // 立即滚动
+    scrollToBottom();
+
+    // 如果正在生成，持续滚动以确保跟随
+    if (isGenerating) {
+      const interval = setInterval(scrollToBottom, 100);
+      return () => clearInterval(interval);
     }
-  }, [messages]);
+  }, [messages, isGenerating, autoScroll]);
+
+  // 手动滚动到底部函数
+  const scrollToBottom = useCallback(() => {
+    messagesEndRef.current?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'end'
+    });
+    setAutoScroll(true);
+  }, []);
+
+  // 检测用户是否手动滚动，禁用自动滚动
+  useEffect(() => {
+    const scrollContainer = scrollRef.current;
+    if (!scrollContainer) return;
+
+    let isUserScrolling = false;
+    let scrollTimeout: NodeJS.Timeout;
+
+    const handleScroll = () => {
+      // 检测是否在底部（允许 100px 误差）
+      const isNearBottom = scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight < 100;
+
+      if (!isNearBottom && isGenerating) {
+        isUserScrolling = true;
+        setAutoScroll(false);
+
+        // 3秒后如果没有继续滚动，恢复自动滚动
+        clearTimeout(scrollTimeout);
+        scrollTimeout = setTimeout(() => {
+          isUserScrolling = false;
+          setAutoScroll(true);
+        }, 3000);
+      }
+    };
+
+    scrollContainer.addEventListener('scroll', handleScroll);
+    return () => {
+      scrollContainer.removeEventListener('scroll', handleScroll);
+      clearTimeout(scrollTimeout);
+    };
+  }, [isGenerating]);
 
   const handleStopGenerating = () => {
     if (abortController) {
@@ -723,14 +788,28 @@ export default function Dashboard() {
             </div>
           </div>
         ))}
+
+        {/* 滚动锚点 */}
+        <div ref={messagesEndRef} className="h-1" />
       </div>
+
+      {/* 滚动控制按钮 - 当不在底部时显示 */}
+      {!autoScroll && (
+        <button
+          onClick={scrollToBottom}
+          className="fixed bottom-28 right-8 z-30 p-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full shadow-lg transition-all duration-300 hover:scale-110 animate-bounce"
+          title="回到底部"
+        >
+          <ArrowDown className="w-5 h-5" />
+        </button>
+      )}
 
       {/* Bottom Input Bar */}
       <div className="absolute bottom-6 left-0 right-0 px-6 z-20 pointer-events-none">
         <div className="max-w-3xl mx-auto relative group pointer-events-auto">
            <div className="absolute -inset-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 rounded-full opacity-20 group-hover:opacity-30 blur-md transition-opacity duration-500" />
-           
-           <div className="relative bg-white dark:bg-gray-800 backdrop-blur-md rounded-full border border-gray-200 dark:border-gray-700 shadow-xl flex items-center p-1.5 transition-colors">
+
+           <div className="relative bg-white/95 dark:bg-gray-800/95 backdrop-blur-md rounded-full border border-gray-200 dark:border-gray-700 shadow-xl flex items-center p-1.5 transition-all duration-300 hover:shadow-2xl">
               <div className="pl-3 pr-2 text-indigo-600 dark:text-indigo-400">
                 <Sparkles className="w-5 h-5 animate-pulse" />
               </div>
@@ -745,24 +824,24 @@ export default function Dashboard() {
               />
 
               {isGenerating ? (
-                <button 
+                <button
                   onClick={handleStopGenerating}
-                  className="p-2 bg-red-600 text-white rounded-full hover:bg-red-700 transition-colors shadow-sm"
+                  className="p-2.5 bg-red-600 hover:bg-red-700 text-white rounded-full transition-all duration-300 shadow-sm hover:shadow-md hover:scale-105"
                   title="停止生成"
                 >
                   <X className="w-4 h-4" />
                 </button>
               ) : (
-                <button 
+                <button
                   onClick={() => handleGenerate()}
                   disabled={!inputValue.trim()}
-                  className="p-2 bg-indigo-600 text-white rounded-full hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                  className="p-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white rounded-full transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 shadow-sm hover:shadow-md hover:scale-105"
                 >
                   <Send className="w-4 h-4" />
                 </button>
               )}
            </div>
-           
+
            <p className="text-[10px] text-center text-gray-400 dark:text-gray-500 mt-2 opacity-70">
             AI 生成内容仅供参考
            </p>

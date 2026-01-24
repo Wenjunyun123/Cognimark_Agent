@@ -1,10 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { 
-  LayoutDashboard, 
-  ShoppingBag, 
-  MessageSquareText, 
-  Settings, 
+import {
+  LayoutDashboard,
+  ShoppingBag,
+  MessageSquareText,
+  Settings,
   Search,
   User,
   Users,
@@ -18,6 +18,13 @@ import {
 import { SessionManager, ChatSession } from '../../utils/sessionManager';
 import { cn } from '../../utils/cn';
 
+// OPTIMIZATION: 提升静态数据到组件外部，避免每次渲染时重新创建 (rendering-hoist-jsx)
+const NAV_ITEMS = [
+  { path: '/', icon: LayoutDashboard, label: 'CogniMark' },
+  { path: '/products', icon: ShoppingBag, label: '智能选品' },
+  { path: '/marketing', icon: MessageSquareText, label: '智能营销文案' },
+] as const;
+
 export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -25,12 +32,6 @@ export default function Sidebar() {
   const userMenuRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
   const location = useLocation();
-
-  const navItems = [
-    { path: '/', icon: LayoutDashboard, label: 'CogniMark' },
-    { path: '/products', icon: ShoppingBag, label: '智能选品' },
-    { path: '/marketing', icon: MessageSquareText, label: '智能营销文案' },
-  ];
 
   useEffect(() => {
     loadSessions();
@@ -143,14 +144,14 @@ export default function Sidebar() {
 
       {/* Navigation */}
       <nav className={cn("flex-1 px-2 space-y-1 overflow-y-auto", collapsed ? "hidden" : "")}>
-        {navItems.map((item) => (
+        {NAV_ITEMS.map((item) => (
           <NavLink
             key={item.path}
             to={item.path}
             className={({ isActive }) => cn(
               "flex items-center gap-3 px-3 py-2 rounded-lg transition-colors duration-200 group min-h-[44px]",
               isActive && !location.search
-                ? "bg-white dark:bg-gray-800 shadow-sm text-indigo-600 dark:text-indigo-400 font-medium" 
+                ? "bg-white dark:bg-gray-800 shadow-sm text-indigo-600 dark:text-indigo-400 font-medium"
                 : "text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white"
             )}
           >
