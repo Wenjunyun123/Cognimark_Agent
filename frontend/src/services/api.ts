@@ -143,6 +143,92 @@ export async function getChatHistory(): Promise<ChatMessage[]> {
   return response.json();
 }
 
+/**
+ * 流式聊天接口 - 返回thinking和回复
+ */
+export async function chatWithAgentStream(
+  request: ChatRequest,
+  onThinking: (content: string) => void,
+  onResponse: (content: string) => void,
+  onThinkingStart: () => void,
+  onThinkingEnd: () => void,
+  onComplete: () => void,
+  onError: (error: string) => void
+): Promise<() => void> {
+  const controller = new AbortController();
+
+  fetch(`${API_BASE_URL}/agent/chat/stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(request),
+    signal: controller.signal,
+  }).then(async (response) => {
+    if (!response.ok) {
+      throw new Error('Failed to chat with agent');
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error('No response body');
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let inThinking = false;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('event:')) {
+          const event = line.slice(6).trim();
+
+          if (event === 'thinking_start') {
+            inThinking = true;
+            onThinkingStart();
+          } else if (event === 'thinking_done') {
+            inThinking = false;
+            onThinkingEnd();
+          } else if (event === 'done') {
+            onComplete();
+          } else if (event === 'error') {
+            onError('Stream error occurred');
+          }
+        } else if (line.startsWith('data:')) {
+          const data = line.slice(5).trim();
+          if (data) {
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.content) {
+                if (inThinking) {
+                  onThinking(parsed.content);
+                } else {
+                  onResponse(parsed.content);
+                }
+              }
+            } catch (e) {
+              // Ignore parse errors for non-JSON data
+            }
+          }
+        }
+      }
+    }
+  }).catch((error) => {
+    if (error.name !== 'AbortError') {
+      onError(error.message);
+    }
+  });
+
+  return () => controller.abort();
+}
+
 
 /**
  * 上传 Excel 文件

@@ -120,7 +120,7 @@ export default function ChatInterface() {
     } catch (error) {
       console.error(error);
       setMessages(prev => prev.map(msg => 
-        msg.id === loadingId ? { ...msg, isLoading: false, content: '❌ 连接后端失败，请确保 API 服务正在运行 (http://127.0.0.1:8000)' } : msg
+        msg.id === loadingId ? { ...msg, isLoading: false, content: '连接后端失败，请确保 API 服务正在运行 (http://127.0.0.1:8000)' } : msg
       ));
     } finally {
       setIsGenerating(false);

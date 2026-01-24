@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { Send, Copy, ThumbsUp, Loader2, Sparkles, Search, Image as ImageIcon, FileText, Plus, ChevronDown, Globe, TrendingUp, Package, BarChart3, Upload, X, FileSpreadsheet, ArrowDown } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { chatWithAgent, getProducts, uploadExcel, getUploadedFiles, deleteUploadedFile, UploadedFile } from '../services/api';
+import { chatWithAgent, chatWithAgentStream, getProducts, uploadExcel, getUploadedFiles, deleteUploadedFile, UploadedFile } from '../services/api';
 import { SessionManager, ChatSession } from '../utils/sessionManager';
 import { cn } from '../utils/cn';
 
@@ -11,7 +11,10 @@ interface Message {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  thinking?: string;
   isLoading?: boolean;
+  isThinking?: boolean;
+  thinkingCollapsed?: boolean; // 控制thinking折叠状态
 }
 
 export default function Dashboard() {
@@ -270,7 +273,7 @@ export default function Dashboard() {
       // 更新最后一条消息为中断状态
       setMessages(prev => prev.map((msg, idx) => 
         idx === prev.length - 1 && msg.isLoading
-          ? { ...msg, content: '⚠️ 已中断生成', isLoading: false }
+          ? { ...msg, content: '已中断生成', isLoading: false }
           : msg
       ));
     }
@@ -302,11 +305,7 @@ export default function Dashboard() {
     setIsGenerating(true);
 
     const loadingId = (Date.now() + 1).toString();
-    setMessages(prev => [...prev, { id: loadingId, role: 'assistant', content: '', isLoading: true }]);
-
-    // 创建新的 AbortController
-    const controller = new AbortController();
-    setAbortController(controller);
+    setMessages(prev => [...prev, { id: loadingId, role: 'assistant', content: '', thinking: '', isLoading: true, isThinking: false, thinkingCollapsed: false }]);
 
     try {
       // 只在用户明确提及产品时添加产品上下文
@@ -315,7 +314,7 @@ export default function Dashboard() {
       if (mentionsProduct && products.length > 0) {
         context = `可用产品列表:\n${products.map(p => `- ${p.product_id}: ${p.title_en}`).join('\n')}`;
       }
-      
+
       // 准备对话历史（只包含之前的消息，不包括当前正在发送的）
       const history = messages
         .filter(m => !m.isLoading)
@@ -323,72 +322,92 @@ export default function Dashboard() {
           role: m.role,
           content: m.content
         }));
-      
-      const result = await chatWithAgent({ 
-        message: fullPrompt,
-        context: context || undefined,
-        history: history.length > 0 ? history : undefined,
-        session_id: currentSession && !currentSession.isTemporary ? currentSession.id : undefined
-      });
-      
-      setMessages(prev => prev.map(msg => 
-        msg.id === loadingId ? { ...msg, isLoading: false, content: '' } : msg
-      ));
 
-      // Simulate streaming effect with abort support
-      let currentText = '';
-      const text = result.response;
-      for (let i = 0; i < text.length; i += 5) {
-        // 检查是否被中断
-        if (controller.signal.aborted) {
-          break;
+      let thinkingText = '';
+      let responseText = '';
+
+      const abortStream = await chatWithAgentStream(
+        {
+          message: fullPrompt,
+          context: context || undefined,
+          history: history.length > 0 ? history : undefined,
+          session_id: currentSession && !currentSession.isTemporary ? currentSession.id : undefined
+        },
+        // onThinking
+        (content) => {
+          thinkingText += content;
+          setMessages(prev => prev.map(msg =>
+            msg.id === loadingId ? { ...msg, thinking: thinkingText } : msg
+          ));
+        },
+        // onResponse
+        (content) => {
+          responseText += content;
+          setMessages(prev => prev.map(msg =>
+            msg.id === loadingId ? { ...msg, content: responseText } : msg
+          ));
+        },
+        // onThinkingStart
+        () => {
+          setMessages(prev => prev.map(msg =>
+            msg.id === loadingId ? { ...msg, isThinking: true, isLoading: false } : msg
+          ));
+        },
+        // onThinkingEnd
+        () => {
+          setMessages(prev => prev.map(msg =>
+            msg.id === loadingId ? { ...msg, isThinking: false, thinkingCollapsed: true } : msg
+          ));
+        },
+        // onComplete
+        () => {
+          setIsGenerating(false);
+          setAbortController(null);
+
+          // 保存会话
+          const assistantMessage: Message = {
+            id: loadingId,
+            role: 'assistant',
+            content: responseText,
+            thinking: thinkingText
+          };
+
+          const updatedMessages = [...messages, userMessage, assistantMessage];
+
+          if (currentSession && !currentSession.isTemporary) {
+            // 保存thinking内容到会话
+            currentSession.messages = updatedMessages.map(m => ({
+              id: m.id,
+              role: m.role,
+              content: m.content,
+              thinking: m.thinking // 保存thinking
+            }));
+            currentSession.updatedAt = Date.now();
+
+            SessionManager.updateSessionTitle(currentSession);
+            SessionManager.saveSession(currentSession);
+            setCurrentSession({...currentSession});
+          }
+        },
+        // onError
+        (error) => {
+          console.error(error);
+          setMessages(prev => prev.map(msg =>
+            msg.id === loadingId ? { ...msg, isLoading: false, isThinking: false, content: '连接后端失败，请确保 API 服务正在运行 (http://127.0.0.1:8000)' } : msg
+          ));
+          setIsGenerating(false);
+          setAbortController(null);
         }
-        
-        const chunk = text.slice(i, i + 5);
-        currentText += chunk;
-        setMessages(prev => {
-          const updated = prev.map(msg => 
-            msg.id === loadingId ? { ...msg, content: currentText } : msg
-          );
-          return updated;
-        });
-        await new Promise(resolve => setTimeout(resolve, 10));
-      }
+      );
 
-      // 保存会话
-      const assistantMessage: Message = {
-        id: loadingId,
-        role: 'assistant',
-        content: result.response
-      };
-
-      const updatedMessages = [...messages, userMessage, assistantMessage];
-      
-      if (currentSession && !currentSession.isTemporary) {
-        currentSession.messages = updatedMessages.map(m => ({
-          id: m.id,
-          role: m.role,
-          content: m.content
-        }));
-        currentSession.updatedAt = Date.now();
-        
-        // 更新标题
-        SessionManager.updateSessionTitle(currentSession);
-        SessionManager.saveSession(currentSession);
-        setCurrentSession({...currentSession});
-      }
+      // 保存abort函数以便手动停止
+      setAbortController({ signal: { aborted: false }, abort: abortStream } as any);
 
     } catch (error: any) {
-      // 忽略中断错误
-      if (error.name === 'AbortError') {
-        return;
-      }
-      
       console.error(error);
-      setMessages(prev => prev.map(msg => 
-        msg.id === loadingId ? { ...msg, isLoading: false, content: '❌ 连接后端失败，请确保 API 服务正在运行 (http://127.0.0.1:8000)' } : msg
+      setMessages(prev => prev.map(msg =>
+        msg.id === loadingId ? { ...msg, isLoading: false, isThinking: false, content: '连接后端失败，请确保 API 服务正在运行 (http://127.0.0.1:8000)' } : msg
       ));
-    } finally {
       setIsGenerating(false);
       setAbortController(null);
     }
@@ -656,17 +675,61 @@ export default function Dashboard() {
           >
             {msg.role !== 'user' && (
               <div className="flex items-center justify-center flex-shrink-0 w-12 h-12 rounded-full bg-indigo-100 dark:bg-indigo-900">
-                <Sparkles className="w-6 h-6 text-indigo-600 dark:text-indigo-400" />
+                <Sparkles className={cn(
+                  "w-6 h-6",
+                  msg.isThinking ? "text-indigo-700 dark:text-indigo-500 animate-pulse" : "text-indigo-600 dark:text-indigo-400"
+                )} />
               </div>
             )}
-            
+
             <div className="space-y-2">
-              <div className={cn(
-                "p-4 rounded-2xl text-sm leading-relaxed shadow-sm transition-colors duration-300",
-                msg.role === 'user' 
-                  ? "bg-[#F4F4F4] dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-tr-none whitespace-pre-wrap" 
-                  : "bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 text-gray-800 dark:text-gray-200 rounded-tl-none prose prose-sm dark:prose-invert max-w-none"
-              )}>
+              {/* Thinking内容 - 无外框 */}
+              {msg.thinking && (
+                <div className="text-xs">
+                  <div
+                    className="flex items-center gap-1.5 mb-1.5 cursor-pointer select-none"
+                    onClick={() => {
+                      if (!msg.isThinking) {
+                        // 切换折叠状态
+                        setMessages(prev => prev.map(m =>
+                          m.id === msg.id ? { ...m, thinkingCollapsed: !m.thinkingCollapsed } : m
+                        ));
+                      }
+                    }}
+                  >
+                    <Sparkles className={cn(
+                      "w-3.5 h-3.5",
+                      // 浅绿色，并在思考时时隐时现
+                      msg.isThinking
+                        ? "text-green-400 animate-pulse"
+                        : "text-green-500/70 dark:text-green-400/70"
+                    )} />
+                    <span className="font-medium text-gray-600 dark:text-gray-300">thinking</span>
+                    {/* 折叠/展开箭头 */}
+                    {!msg.isThinking && (
+                      <ChevronDown className={cn(
+                        "w-3 h-3 ml-auto transition-transform duration-200",
+                        msg.thinkingCollapsed && "rotate-180"
+                      )} />
+                    )}
+                  </div>
+                  {/* Thinking内容 - 思考中或未折叠时显示 */}
+                  {(msg.isThinking || !msg.thinkingCollapsed) && (
+                    <div className="animate-fadeIn px-3 text-gray-500/70 dark:text-gray-400/60">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.thinking}</ReactMarkdown>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 只在有正式内容时才显示白框 */}
+              {msg.content && (
+                <div className={cn(
+                  "p-4 rounded-2xl text-sm leading-relaxed shadow-sm transition-colors duration-300",
+                  msg.role === 'user'
+                    ? "bg-[#F4F4F4] dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-tr-none whitespace-pre-wrap"
+                    : "bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 text-gray-800 dark:text-gray-200 rounded-tl-none prose prose-sm dark:prose-invert max-w-none"
+                )}>
                  {msg.isLoading ? (
                    <div className="flex gap-1 h-6 items-center">
                      <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '0s' }}></span>
@@ -678,9 +741,11 @@ export default function Dashboard() {
                  ) : (
                    msg.content
                  )}
-              </div>
-              
-              {msg.role === 'assistant' && !msg.isLoading && (
+                </div>
+              )}
+
+              {/* 操作按钮 - 只在有内容时显示 */}
+              {msg.role === 'assistant' && !msg.isLoading && msg.content && (
                 <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button 
                     onClick={() => navigator.clipboard.writeText(msg.content)}
@@ -689,25 +754,21 @@ export default function Dashboard() {
                   >
                     <Copy className="w-4 h-4" />
                   </button>
-                  <button 
+                  <button
                     onClick={async () => {
                       if (regeneratingId) return;
-                      
+
                       // 找到这条消息对应的用户消息
                       const msgIndex = messages.findIndex(m => m.id === msg.id);
                       if (msgIndex > 0) {
                         const userMsg = messages[msgIndex - 1];
                         if (userMsg.role === 'user') {
                           // 将当前回复设置为加载状态
-                          setMessages(prev => prev.map(m => 
-                            m.id === msg.id ? { ...m, content: '', isLoading: true } : m
+                          setMessages(prev => prev.map(m =>
+                            m.id === msg.id ? { ...m, content: '', thinking: '', isLoading: true, isThinking: false, thinkingCollapsed: false } : m
                           ));
                           setRegeneratingId(msg.id);
-                          
-                          // 创建新的 AbortController
-                          const controller = new AbortController();
-                          setAbortController(controller);
-                          
+
                           try {
                             // 检测是否需要产品上下文
                             let context = '';
@@ -715,7 +776,7 @@ export default function Dashboard() {
                             if (mentionsProduct && products.length > 0) {
                               context = `可用产品列表:\n${products.map(p => `- ${p.product_id}: ${p.title_en}`).join('\n')}`;
                             }
-                            
+
                             // 准备历史（到重新生成的这条消息之前）
                             const historyUpToThis = messages
                               .slice(0, msgIndex)
@@ -724,57 +785,79 @@ export default function Dashboard() {
                                 role: m.role,
                                 content: m.content
                               }));
-                            
-                            const result = await chatWithAgent({ 
-                              message: userMsg.content,
-                              context: context || undefined,
-                              history: historyUpToThis.length > 0 ? historyUpToThis : undefined,
-                              session_id: currentSession && !currentSession.isTemporary ? currentSession.id : undefined
-                            });
-                            
-                            // 更新为非加载状态
-                            setMessages(prev => prev.map(m => 
-                              m.id === msg.id ? { ...m, isLoading: false, content: '' } : m
-                            ));
-                            
-                            // 流式更新内容
-                            let currentText = '';
-                            const text = result.response;
-                            for (let i = 0; i < text.length; i += 5) {
-                              if (controller.signal.aborted) break;
-                              
-                              const chunk = text.slice(i, i + 5);
-                              currentText += chunk;
-                              setMessages(prev => prev.map(m => 
-                                m.id === msg.id ? { ...m, content: currentText } : m
-                              ));
-                              await new Promise(resolve => setTimeout(resolve, 10));
-                            }
-                            
-                            // 保存会话（临时会话不保存）
-                            if (currentSession && !currentSession.isTemporary) {
-                              const msgIdx = currentSession.messages.findIndex(m => m.id === msg.id);
-                              if (msgIdx >= 0) {
-                                currentSession.messages[msgIdx].content = result.response;
-                                currentSession.updatedAt = Date.now();
-                                SessionManager.saveSession(currentSession);
+
+                            let thinkingText = '';
+                            let responseText = '';
+
+                            await chatWithAgentStream(
+                              {
+                                message: userMsg.content,
+                                context: context || undefined,
+                                history: historyUpToThis.length > 0 ? historyUpToThis : undefined,
+                                session_id: currentSession && !currentSession.isTemporary ? currentSession.id : undefined
+                              },
+                              // onThinking
+                              (content) => {
+                                thinkingText += content;
+                                setMessages(prev => prev.map(m =>
+                                  m.id === msg.id ? { ...m, thinking: thinkingText } : m
+                                ));
+                              },
+                              // onResponse
+                              (content) => {
+                                responseText += content;
+                                setMessages(prev => prev.map(m =>
+                                  m.id === msg.id ? { ...m, content: responseText } : m
+                                ));
+                              },
+                              // onThinkingStart
+                              () => {
+                                setMessages(prev => prev.map(m =>
+                                  m.id === msg.id ? { ...m, isThinking: true, isLoading: false } : m
+                                ));
+                              },
+                              // onThinkingEnd
+                              () => {
+                                setMessages(prev => prev.map(m =>
+                                  m.id === msg.id ? { ...m, isThinking: false, thinkingCollapsed: true } : m
+                                ));
+                              },
+                              // onComplete
+                              () => {
+                                setRegeneratingId(null);
+
+                                // 保存会话（临时会话不保存）
+                                if (currentSession && !currentSession.isTemporary) {
+                                  const msgIdx = currentSession.messages.findIndex(m => m.id === msg.id);
+                                  if (msgIdx >= 0) {
+                                    currentSession.messages[msgIdx].content = responseText;
+                                    currentSession.messages[msgIdx].thinking = thinkingText; // 保存thinking
+                                    currentSession.updatedAt = Date.now();
+                                    SessionManager.saveSession(currentSession);
+                                  }
+                                }
+                              },
+                              // onError
+                              (error) => {
+                                setMessages(prev => prev.map(m =>
+                                  m.id === msg.id ? { ...m, isLoading: false, isThinking: false, content: '重新生成失败' } : m
+                                ));
+                                setRegeneratingId(null);
                               }
-                            }
-                            
+                            );
+
                           } catch (error: any) {
                             if (error.name !== 'AbortError') {
-                              setMessages(prev => prev.map(m => 
-                                m.id === msg.id ? { ...m, isLoading: false, content: '❌ 重新生成失败' } : m
+                              setMessages(prev => prev.map(m =>
+                                m.id === msg.id ? { ...m, isLoading: false, isThinking: false, content: '重新生成失败' } : m
                               ));
                             }
-                          } finally {
                             setRegeneratingId(null);
-                            setAbortController(null);
                           }
                         }
                       }
                     }}
-                    className="p-1.5 text-gray-400 dark:text-gray-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-md transition-colors text-xs flex items-center gap-1" 
+                    className="p-1.5 text-gray-400 dark:text-gray-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-md transition-colors text-xs flex items-center gap-1"
                     title="重新生成"
                     disabled={regeneratingId !== null}
                   >
@@ -811,7 +894,7 @@ export default function Dashboard() {
 
            <div className="relative bg-white/95 dark:bg-gray-800/95 backdrop-blur-md rounded-full border border-gray-200 dark:border-gray-700 shadow-xl flex items-center p-1.5 transition-all duration-300 hover:shadow-2xl">
               <div className="pl-3 pr-2 text-indigo-600 dark:text-indigo-400">
-                <Sparkles className="w-5 h-5 animate-pulse" />
+                <Sparkles className={cn("w-5 h-5", isGenerating && "animate-pulse")} />
               </div>
 
               <input

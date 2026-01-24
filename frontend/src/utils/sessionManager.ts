@@ -6,6 +6,7 @@ export interface ChatSession {
     id: string;
     role: 'user' | 'assistant';
     content: string;
+    thinking?: string; // 添加thinking字段
   }>;
   createdAt: number;
   updatedAt: number;

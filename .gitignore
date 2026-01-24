@@ -33,6 +33,21 @@ Thumbs.db
 temp_repo/
 *.tmp
 *.bak
+nul
+
+# 数据库文件
+*.db
+*.db.backup*
+*.sqlite
+*.sqlite3
+chroma_db/
+
+# 聊天历史
+chat_history.json
+backend/chat_history.json
+
+# Claude相关
+.claude/
 
 # 测试文件
 test_*.py
@@ -43,6 +58,11 @@ __tests__/
 *.test.tsx
 *.spec.ts
 *.spec.tsx
+
+# Excel数据文件
+*.xlsx
+*.xls
+*.csv
 
 
 

@@ -254,6 +254,38 @@ class DeepSeekLLM:
         except Exception as e:
             return f"Error calling LLM: {str(e)}"
 
+    def stream_chat(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        history: Optional[List[Dict[str, str]]] = None
+    ):
+        """
+        流式聊天（向后兼容接口）
+
+        Args:
+            system_prompt: 系统提示词
+            user_prompt: 用户提示词
+            history: 对话历史
+
+        Yields:
+            str: 文本片段
+        """
+        try:
+            # 构建消息列表
+            messages = [{"role": "system", "content": system_prompt}]
+
+            if history:
+                messages.extend(history)
+
+            messages.append({"role": "user", "content": user_prompt})
+
+            # 使用新的LLMService的流式方法
+            yield from self._service.stream_chat(messages)
+
+        except Exception as e:
+            yield f"Error calling LLM: {str(e)}"
+
 
 # 导出
 __all__ = [

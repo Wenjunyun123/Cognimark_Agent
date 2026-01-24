@@ -27,7 +27,7 @@ export default function ProductIntelligence() {
       setAiInsight(result.explanation);
     } catch (error) {
       console.error('Error:', error);
-      setAiInsight('❌ 连接后端失败，请确保 API 服务正在运行 (http://127.0.0.1:8000)');
+      setAiInsight('连接后端失败，请确保 API 服务正在运行 (http://127.0.0.1:8000)');
     } finally {
       setIsAnalyzing(false);
     }
@@ -38,7 +38,7 @@ export default function ProductIntelligence() {
       {/* Campaign Input Section */}
       <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6 transition-colors duration-300">
         <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-4">
-          🎯 营销活动描述
+          营销活动描述
         </h2>
         
         <div className="space-y-4">
@@ -123,7 +123,7 @@ export default function ProductIntelligence() {
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden transition-colors duration-300">
           <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
             <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-100">
-              ✨ 推荐产品 ({products.length})
+              推荐产品 ({products.length})
             </h3>
           </div>
 
@@ -174,7 +174,7 @@ export default function ProductIntelligence() {
 
                 <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
                   <p className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2">
-                    🏷️ {product.tags}
+                    {product.tags}
                   </p>
                 </div>
               </div>

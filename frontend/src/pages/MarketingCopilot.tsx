@@ -3,14 +3,16 @@ import { useLocation } from 'react-router-dom';
 import { Send, Copy, ThumbsUp, Loader2, Sparkles, Search, Image as ImageIcon, FileText, Plus, ChevronDown, Globe } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { getProducts, generateMarketingCopy } from '../services/api';
+import { getProducts, generateMarketingCopy, chatWithAgentStream } from '../services/api';
 import { cn } from '../utils/cn';
 
 interface Message {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  thinking?: string;
   isLoading?: boolean;
+  isThinking?: boolean;
 }
 
 export default function MarketingCopilot() {
@@ -76,36 +78,88 @@ export default function MarketingCopilot() {
     setIsGenerating(true);
 
     const loadingId = (Date.now() + 1).toString();
-    setMessages(prev => [...prev, { id: loadingId, role: 'assistant', content: '', isLoading: true }]);
+    setMessages(prev => [...prev, { id: loadingId, role: 'assistant', content: '', thinking: '', isLoading: true, isThinking: false }]);
 
     try {
-      const response = await generateMarketingCopy({
-        product_id: selectedProduct,
-        target_language: targetLanguage,
-        channel: channel
-      });
-      
-      setMessages(prev => prev.map(msg => 
-        msg.id === loadingId ? { ...msg, isLoading: false, content: '' } : msg
-      ));
+      // 如果有自定义提示，使用流式聊天API获取thinking
+      if (customPrompt) {
+        let thinkingText = '';
+        let responseText = '';
 
-      let currentText = '';
-      const text = response.copy_text;
-      for (let i = 0; i < text.length; i += 5) {
-        const chunk = text.slice(i, i + 5);
-        currentText += chunk;
-        setMessages(prev => prev.map(msg => 
-          msg.id === loadingId ? { ...msg, content: currentText } : msg
+        await chatWithAgentStream(
+          {
+            message: `我正在使用产品 ${selectedProduct}（${products.find(p => p.product_id === selectedProduct)?.title_en}），请帮我：${customPrompt}`,
+          },
+          // onThinking
+          (content) => {
+            thinkingText += content;
+            setMessages(prev => prev.map(msg =>
+              msg.id === loadingId ? { ...msg, thinking: thinkingText } : msg
+            ));
+          },
+          // onResponse
+          (content) => {
+            responseText += content;
+            setMessages(prev => prev.map(msg =>
+              msg.id === loadingId ? { ...msg, content: responseText } : msg
+            ));
+          },
+          // onThinkingStart
+          () => {
+            setMessages(prev => prev.map(msg =>
+              msg.id === loadingId ? { ...msg, isThinking: true, isLoading: false } : msg
+            ));
+          },
+          // onThinkingEnd
+          () => {
+            setMessages(prev => prev.map(msg =>
+              msg.id === loadingId ? { ...msg, isThinking: false } : msg
+            ));
+          },
+          // onComplete
+          () => {
+            setIsGenerating(false);
+          },
+          // onError
+          (error) => {
+            console.error(error);
+            setMessages(prev => prev.map(msg =>
+              msg.id === loadingId ? { ...msg, isLoading: false, isThinking: false, content: '连接后端失败，请确保 API 服务正在运行 (http://127.0.0.1:8000)' } : msg
+            ));
+            setIsGenerating(false);
+          }
+        );
+      } else {
+        // 使用原来的营销文案API
+        const response = await generateMarketingCopy({
+          product_id: selectedProduct,
+          target_language: targetLanguage,
+          channel: channel
+        });
+
+        setMessages(prev => prev.map(msg =>
+          msg.id === loadingId ? { ...msg, isLoading: false, content: '' } : msg
         ));
-        await new Promise(resolve => setTimeout(resolve, 10));
+
+        let currentText = '';
+        const text = response.copy_text;
+        for (let i = 0; i < text.length; i += 5) {
+          const chunk = text.slice(i, i + 5);
+          currentText += chunk;
+          setMessages(prev => prev.map(msg =>
+            msg.id === loadingId ? { ...msg, content: currentText } : msg
+          ));
+          await new Promise(resolve => setTimeout(resolve, 10));
+        }
+
+        setIsGenerating(false);
       }
 
     } catch (error) {
       console.error(error);
-      setMessages(prev => prev.map(msg => 
-        msg.id === loadingId ? { ...msg, isLoading: false, content: '❌ 连接后端失败，请确保 API 服务正在运行 (http://127.0.0.1:8000)' } : msg
+      setMessages(prev => prev.map(msg =>
+        msg.id === loadingId ? { ...msg, isLoading: false, isThinking: false, content: '连接后端失败，请确保 API 服务正在运行 (http://127.0.0.1:8000)' } : msg
       ));
-    } finally {
       setIsGenerating(false);
     }
   };
@@ -228,15 +282,29 @@ export default function MarketingCopilot() {
           >
             {msg.role !== 'user' && (
               <div className="flex items-center justify-center flex-shrink-0 w-12 h-12 rounded-full bg-indigo-100 dark:bg-indigo-900">
-                <Sparkles className="w-6 h-6 text-indigo-600 dark:text-indigo-400" />
+                <Sparkles className={cn(
+                  "w-6 h-6",
+                  msg.isThinking ? "text-indigo-700 dark:text-indigo-500 animate-pulse" : "text-indigo-600 dark:text-indigo-400"
+                )} />
               </div>
             )}
-            
+
             <div className="space-y-2">
+              {/* Thinking内容 */}
+              {msg.thinking && (
+                <div className="bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded-xl p-3 text-xs text-gray-600 dark:text-gray-400">
+                  <div className="flex items-center gap-1 mb-1">
+                    <Sparkles className="w-3 h-3 text-indigo-500" />
+                    <span className="font-medium">思考过程</span>
+                  </div>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.thinking}</ReactMarkdown>
+                </div>
+              )}
+
               <div className={cn(
                 "p-4 rounded-2xl text-sm leading-relaxed shadow-sm transition-colors duration-300",
-                msg.role === 'user' 
-                  ? "bg-[#F4F4F4] dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-tr-none whitespace-pre-wrap" 
+                msg.role === 'user'
+                  ? "bg-[#F4F4F4] dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-tr-none whitespace-pre-wrap"
                   : "bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 text-gray-800 dark:text-gray-200 rounded-tl-none prose prose-sm dark:prose-invert max-w-none"
               )}>
                  {msg.isLoading ? (
@@ -278,7 +346,7 @@ export default function MarketingCopilot() {
            
            <div className="relative bg-white dark:bg-gray-800 backdrop-blur-md rounded-full border border-gray-200 dark:border-gray-700 shadow-xl flex items-center p-1.5 transition-colors">
               <div className="pl-3 pr-2 text-indigo-600 dark:text-indigo-400">
-                <Sparkles className="w-5 h-5 animate-pulse" />
+                <Sparkles className={cn("w-5 h-5", isGenerating && "animate-pulse")} />
               </div>
 
               <input
