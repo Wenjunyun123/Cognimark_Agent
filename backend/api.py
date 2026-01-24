@@ -1,6 +1,7 @@
 import uvicorn
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional
 import pandas as pd
@@ -129,6 +130,7 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     response: str
     message_id: str
+    thinking: Optional[str] = None  # Agent 的思考过程
 
 
 class FileAnalysisResponse(BaseModel):
@@ -251,26 +253,19 @@ def chat_with_agent(req: ChatRequest):
         # 1. 确定会话上下文
         session_id = req.session_id
         current_history = []
-        
+
         if session_id:
-            # 只有非临时会话（不以 'temp_' 开头）才保存到文件
             is_temp_session = session_id.startswith('temp_')
-            
             if not is_temp_session and session_id not in CHAT_SESSIONS:
                 CHAT_SESSIONS[session_id] = []
                 current_history = CHAT_SESSIONS[session_id]
             elif not is_temp_session:
                 current_history = CHAT_SESSIONS[session_id]
-            else:
-                # 临时会话使用内存中的临时存储，不持久化
-                # 这里我们简单处理：临时会话也用 current_history 暂存，但不写入文件
-                # 或者，如果前端每次都发完整 history，这里甚至可以不需要 current_history
-                pass
-        
-        # 2. 如果有 session_id 且非临时，保存用户消息到后端历史
+
+        # 2. 保存用户消息到历史
         if session_id and not session_id.startswith('temp_'):
             user_msg_entry = {
-                "role": "user", 
+                "role": "user",
                 "content": req.message,
                 "timestamp": datetime.now().isoformat()
             }
@@ -285,44 +280,36 @@ def chat_with_agent(req: ChatRequest):
             '[广告优化建议模式]': "You are an advertising optimization expert. Focus on ad performance, ROI improvement, targeting strategies, and campaign optimization. Provide specific, measurable advice.",
             '[转化率优化模式]': "You are a conversion rate optimization specialist. Focus on user experience, funnel optimization, A/B testing, and conversion tactics. Give practical improvement steps."
         }
-        
-        # 检查是否使用特定模式
+
         system_prompt = "You are CogniMark, a helpful AI assistant specialized in cross-border e-commerce, product selection, and marketing. You provide professional, actionable advice. Maintain conversation context and refer to previous messages when relevant."
         user_message = req.message
-        
+        detected_mode = "普通模式"
+
         for mode_key, mode_system in mode_prompts.items():
             if user_message.startswith(mode_key):
                 system_prompt = mode_system + " Maintain conversation context and refer to previous messages when relevant."
                 user_message = user_message.replace(mode_key, '').strip()
+                detected_mode = mode_key.replace('[', '').replace(']', '')
                 break
-        
-        # 检查是否有上传的数据
+
+        # 收集上传数据上下文
         uploaded_data_context = ""
         if uploaded_data_store:
-            uploaded_data_context = "\n\n已上传的外部数据摘要:\n"
+            uploaded_data_context = "\n\n【已上传的外部数据】\n"
             for filename, data_info in uploaded_data_store.items():
-                uploaded_data_context += f"- {filename}: {data_info['rows']} 行, {data_info['columns']} 列\n"
-                uploaded_data_context += f"  列名: {', '.join(data_info['column_names'])}\n"
-                
-                # 如果有数据，提供更详细的上下文
-                df = data_info.get('dataframe')
-                if df is not None:
-                    uploaded_data_context += f"  数据预览（前3行）:\n{df.head(3).to_string()}\n"
-        
-        # 构建最终的用户提示
-        final_prompt = ""
-        if req.context:
-            final_prompt += f"Context: {req.context}\n"
-        if uploaded_data_context:
-            final_prompt += uploaded_data_context
-        final_prompt += f"\nUser question: {user_message}"
-        
-        # 3. 准备 LLM 历史上下文
+                uploaded_data_context += f"- {filename}: {data_info['rows']}行 × {data_info['columns']}列 | 列名: {', '.join(data_info['column_names'])}\n"
+
+        # 收集历史对话上下文
+        history_context = ""
+        if current_history and len(current_history) > 1:
+            history_context = "\n\n【历史对话摘要】\n"
+            for msg in current_history[-3:-1]:  # 只取最近3条
+                role = "用户" if msg["role"] == "user" else "助手"
+                history_context += f"- {role}: {msg['content'][:100]}{'...' if len(msg['content']) > 100 else ''}\n"
+
+        # 构建 LLM 历史上下文
         llm_history = []
-        
         if session_id and not session_id.startswith('temp_'):
-            # 使用后端存储的历史（排除刚刚加入的当前消息）
-            # 注意：current_history 可能是引用，修改它会影响全局
             if current_history:
                 for msg in current_history[:-1]:
                     llm_history.append({
@@ -330,16 +317,66 @@ def chat_with_agent(req: ChatRequest):
                         "content": msg["content"]
                     })
         elif req.history:
-            # 如果没有 session_id 或为临时会话，使用前端传来的 history
             for msg in req.history:
                 llm_history.append({
                     "role": msg.role,
                     "content": msg.content
                 })
-        
+
+        # 🧠 生成深度思考过程
+        thinking_prompt = f"""你是一个专业的 AI 助手 CogniMark。现在请你分析用户的问题，并展示你的思考过程。
+
+【用户问题】
+{req.message}
+
+【当前模式】
+{detected_mode}
+
+【可用上下文】
+{uploaded_data_context if uploaded_data_context else "无额外数据"}
+{history_context if history_context else "无历史对话"}
+
+【你的任务】
+请按以下结构展示你的深度思考过程：
+
+## 📋 用户输入分析
+- 分析用户的问题类型、核心诉求、潜在需求
+- 识别关键信息和背景
+
+## 🔍 问题理解
+- 从专业角度解读问题的本质
+- 判断需要哪些知识或工具来回答
+
+## 💡 思考路径
+- 展示你的推理逻辑
+- 说明为什么选择这种回答方式
+- 如果有多个可能的解决方案，说明你选择的理由
+
+## 🎯 回答策略
+- 说明你将如何组织回答
+- 强调回答的重点和结构
+
+请用中文回答，语言要自然流畅，展示真实的思考过程。"""
+
+        # 调用 LLM 生成思考过程
+        thinking_content = llm.chat(
+            "你是 CogniMark 的思考模块。请展示你的深度思考过程，帮助用户理解你的分析逻辑。",
+            thinking_prompt,
+            history=[]  # 思考过程不需要历史
+        )
+
+        # 构建最终提示
+        final_prompt = ""
+        if req.context:
+            final_prompt += f"Context: {req.context}\n"
+        if uploaded_data_context:
+            final_prompt += uploaded_data_context + "\n"
+        final_prompt += f"User question: {user_message}"
+
+        # 生成最终回答
         response_text = llm.chat(system_prompt, final_prompt, history=llm_history)
-        
-        # 4. 如果有 session_id 且非临时，保存助手回复到后端历史
+
+        # 保存助手回复
         if session_id and not session_id.startswith('temp_'):
             assistant_msg_entry = {
                 "role": "assistant",
@@ -349,10 +386,243 @@ def chat_with_agent(req: ChatRequest):
             if current_history is not None:
                 current_history.append(assistant_msg_entry)
                 save_history()
-        
-        return ChatResponse(response=response_text, message_id=str(uuid.uuid4()))
+
+        return ChatResponse(
+            response=response_text,
+            message_id=str(uuid.uuid4()),
+            thinking=thinking_content
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/agent/chat/stream")
+async def chat_with_agent_stream(req: ChatRequest):
+    """
+    流式聊天接口 - 实时展示思考过程和回答
+
+    使用 Chain of Thought (CoT) 让模型展示真实推理过程
+    """
+    async def generate_stream():
+        try:
+            import asyncio
+
+            # 1. 确定会话上下文
+            session_id = req.session_id
+            current_history = []
+
+            if session_id:
+                is_temp_session = session_id.startswith('temp_')
+                if not is_temp_session and session_id not in CHAT_SESSIONS:
+                    CHAT_SESSIONS[session_id] = []
+                    current_history = CHAT_SESSIONS[session_id]
+                elif not is_temp_session:
+                    current_history = CHAT_SESSIONS[session_id]
+
+            # 2. 保存用户消息
+            if session_id and not session_id.startswith('temp_'):
+                user_msg_entry = {
+                    "role": "user",
+                    "content": req.message,
+                    "timestamp": datetime.now().isoformat()
+                }
+                if current_history is not None:
+                    current_history.append(user_msg_entry)
+                    save_history()
+
+            # 检测分析模式
+            mode_prompts = {
+                '[市场趋势分析模式]': "You are a market analysis expert. Focus on market trends, opportunities, competitive landscape, and data-driven insights. Provide actionable recommendations based on data.",
+                '[选品策略建议模式]': "You are a product selection strategist. Focus on product recommendations, category analysis, profit potential, and market fit. Use data to support your suggestions.",
+                '[广告优化建议模式]': "You are an advertising optimization expert. Focus on ad performance, ROI improvement, targeting strategies, and campaign optimization. Provide specific, measurable advice.",
+                '[转化率优化模式]': "You are a conversion rate optimization specialist. Focus on user experience, funnel optimization, A/B testing, and conversion tactics. Give practical improvement steps."
+            }
+
+            system_prompt = "You are CogniMark, a helpful AI assistant specialized in cross-border e-commerce, product selection, and marketing. You provide professional, actionable advice. Maintain conversation context and refer to previous messages when relevant."
+            user_message = req.message
+
+            for mode_key, mode_system in mode_prompts.items():
+                if user_message.startswith(mode_key):
+                    system_prompt = mode_system + " Maintain conversation context and refer to previous messages when relevant."
+                    user_message = user_message.replace(mode_key, '').strip()
+                    break
+
+            # 收集上下文
+            uploaded_data_context = ""
+            if uploaded_data_store:
+                uploaded_data_context = "\n\n【已上传的外部数据】\n"
+                for filename, data_info in uploaded_data_store.items():
+                    uploaded_data_context += f"- {filename}: {data_info['rows']}行 × {data_info['columns']}列\n"
+
+            # 📚 查询数据库中的课程数据上下文
+            database_context = ""
+            try:
+                from database.db_manager import get_db_context
+                from database.models import ProductDB
+
+                with get_db_context() as session:
+                    # 检测用户查询是否与课程相关
+                    keywords = ['课程', '资源', '教程', '商品', '产品', 'database', '数据', '有哪些']
+                    is_course_query = any(kw in user_message.lower() for kw in keywords)
+
+                    if is_course_query:
+                        # 获取课程统计
+                        total = session.query(ProductDB).filter(
+                            ProductDB.external_id.isnot(None)
+                        ).count()
+
+                        # 获取最近几条课程作为示例
+                        recent_courses = session.query(ProductDB).filter(
+                            ProductDB.external_id.isnot(None)
+                        ).order_by(ProductDB.created_at.desc()).limit(5).all()
+
+                        database_context = f"\n\n【数据库课程数据】\n"
+                        database_context += f"- 总计: {total} 条课程记录\n"
+
+                        if recent_courses:
+                            database_context += f"- 最新课程示例:\n"
+                            for c in recent_courses:
+                                title = c.title_zh[:40] + "..." if c.title_zh and len(c.title_zh) > 40 else c.title_zh
+                                database_context += f"  · {title}\n"
+
+            except Exception as e:
+                # 如果查询失败，不影响正常对话
+                pass
+
+            # 构建 LLM 历史上下文
+            llm_history = []
+            if session_id and not session_id.startswith('temp_'):
+                if current_history:
+                    for msg in current_history[:-1]:
+                        llm_history.append({
+                            "role": msg["role"],
+                            "content": msg["content"]
+                        })
+            elif req.history:
+                for msg in req.history:
+                    llm_history.append({
+                        "role": msg.role,
+                        "content": msg.content
+                    })
+
+            # 🧠 使用 CoT prompting 让模型展示真实思考过程（中文）
+            # 使用特殊分隔符
+            cot_system_prompt = system_prompt + "\n\n重要提示：在回答之前，你必须展示你的思考过程。请严格按照以下格式：\n\n🤔 [深度思考]\n首先，分析用户的问题...\n然后，考虑上下文信息...\n最后，确定回答方案...\n\n✅ [回答]\n现在提供你的清晰、简洁的回答。"
+
+            # 构建最终提示，强制要求显示思考过程（中文）
+            final_prompt = f"""请逐步展示你的思考过程，然后给出最终回答。
+
+"""
+            if req.context:
+                final_prompt += f"上下文: {req.context}\n\n"
+            if uploaded_data_context:
+                final_prompt += f"可用数据: {uploaded_data_context}\n\n"
+            if database_context:
+                final_prompt += f"{database_context}\n\n"
+            final_prompt += f"用户问题: {user_message}\n\n"""
+
+            final_prompt += """重要格式要求：
+你必须按照以下结构回答：
+
+🤔 [深度思考]
+[在此处逐步展示你的推理过程 - 分析问题、考虑可用信息、规划回答策略]
+
+✅ [回答]
+[在此处给出你的清晰回答]
+
+思考过程应该详细，展示你的真实推理逻辑。请用中文进行思考。"""
+
+            # 流式调用，使用延迟发送策略检测分隔符
+            in_thinking = False
+            thinking_buffer = ""
+            response_buffer = ""
+
+            # 分隔符模式（中文）
+            thinking_start_pattern = "🤔 [深度思考]"
+            answer_start_pattern = "✅ [回答]"
+
+            # 延迟缓冲区 - 保存可能包含分隔符的内容
+            # 缓冲区大小设置为50，确保能容纳分隔符（最长约21字符）
+            pending_buffer = ""
+            BUFFER_SIZE = 50
+
+            def send_content(content: str, is_thinking: bool):
+                """发送内容的辅助函数"""
+                if not content:
+                    return
+                escaped = content.replace('\n', '\\n').replace('"', '\\"')
+                event_type = "thinking" if is_thinking else "response"
+                return f"event: {event_type}\ndata: {{\"content\": \"{escaped}\"}}\n\n"
+
+            for chunk in llm.stream_chat(cot_system_prompt, final_prompt, history=llm_history):
+                if not chunk:
+                    continue
+
+                # 将chunk添加到待处理缓冲区
+                pending_buffer += chunk
+
+                # 在非思考状态下检测思考开始标记
+                if not in_thinking and thinking_start_pattern in pending_buffer:
+                    # 发送标记之前的内容（如果有）
+                    parts = pending_buffer.split(thinking_start_pattern, 1)
+                    if parts[0].strip():
+                        yield send_content(parts[0], False)
+                    # 标记思考开始
+                    yield f"event: thinking_start\ndata: {{}}\n\n"
+                    in_thinking = True
+                    # 保留标记之后的内容
+                    pending_buffer = parts[1] if len(parts) > 1 else ""
+                    continue
+
+                # 在思考状态下检测答案开始标记
+                if in_thinking and answer_start_pattern in pending_buffer:
+                    # 发送答案标记之前的思考内容
+                    parts = pending_buffer.split(answer_start_pattern, 1)
+                    if parts[0].strip():
+                        yield send_content(parts[0], True)
+                    # 标记思考完成
+                    yield f"event: thinking_done\ndata: {{}}\n\n"
+                    in_thinking = False
+                    # 保留标记之后的内容
+                    pending_buffer = parts[1] if len(parts) > 1 else ""
+                    continue
+
+                # 如果缓冲区太长，且没有检测到分隔符，则发送内容
+                # 保留最后BUFFER_SIZE个字符用于跨chunk检测
+                if len(pending_buffer) > BUFFER_SIZE:
+                    send_now = pending_buffer[:-BUFFER_SIZE]
+                    pending_buffer = pending_buffer[-BUFFER_SIZE:]
+
+                    if send_now:
+                        thinking_buffer += send_now
+                        response_buffer += send_now
+                        yield send_content(send_now, in_thinking)
+                        await asyncio.sleep(0.01)
+
+            # 发送剩余的待处理内容
+            if pending_buffer.strip():
+                pending_escaped = pending_buffer.replace('\n', '\\n').replace('"', '\\"')
+                event_type = "thinking" if in_thinking else "response"
+                yield f"event: {event_type}\ndata: {{\"content\": \"{pending_escaped}\"}}\n\n"
+
+            # 如果仍在思考中，发送思考完成事件
+            if in_thinking:
+                yield f"event: thinking_done\ndata: {{}}\n\n"
+
+            yield f"event: done\ndata: {{}}\n\n"
+
+        except Exception as e:
+            error_msg = str(e).replace('"', '\\"')
+            yield f"event: error\ndata: {{\"message\": \"{error_msg}\"}}\n\n"
+
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+    )
 
 @app.post("/upload/excel", response_model=FileAnalysisResponse)
 async def upload_excel(file: UploadFile = File(...)):
@@ -577,6 +847,281 @@ def initialize_rag():
         return {"message": "RAG服务初始化成功"}
     else:
         raise HTTPException(status_code=500, detail="RAG服务初始化失败")
+
+
+# ==================== 数据导入接口 ====================
+
+class ColumnMapping(BaseModel):
+    """列名映射"""
+    external_id: Optional[str] = None
+    title_zh: Optional[str] = None
+    resource_url: Optional[str] = None
+    created_at: Optional[str] = None
+
+
+class ImportRequest(BaseModel):
+    """导入请求"""
+    batch_name: Optional[str] = None
+    column_mapping: Optional[Dict[str, str]] = None
+    skip_duplicates: bool = True
+    update_existing: bool = False
+
+
+class ImportResponse(BaseModel):
+    """导入响应"""
+    batch_id: str
+    total_records: int
+    success_count: int
+    failed_count: int
+    skipped_count: int
+    status: str
+    errors: List[str] = []
+
+
+@app.post("/import/data", response_model=ImportResponse)
+async def import_data(
+    file: UploadFile = File(...),
+    skip_duplicates: bool = Form(True),
+    update_existing: bool = Form(False),
+    batch_name: Optional[str] = Form(None),
+    column_mapping: Optional[str] = Form(None)
+):
+    """
+    导入Excel/CSV数据到数据库
+
+    支持自动检测列名，也可手动指定列映射：
+    - external_id: 外部ID（用于去重）
+    - title_zh: 商品名称
+    - resource_url: 资源链接
+    - created_at: 创建时间
+
+    返回导入结果统计
+    """
+    import tempfile
+    import os
+    import json
+    from services.import_service import DataImportService
+
+    try:
+        # 检查文件类型
+        is_csv = file.filename.endswith('.csv')
+        is_excel = file.filename.endswith('.xlsx') or file.filename.endswith('.xls')
+
+        if not (is_csv or is_excel):
+            raise HTTPException(status_code=400, detail="只支持 Excel (.xlsx, .xls) 或 CSV (.csv) 文件")
+
+        # 保存到临时文件
+        suffix = '.csv' if is_csv else '.xlsx'
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            content = await file.read()
+            tmp.write(content)
+            tmp_path = tmp.name
+
+        try:
+            # 解析列映射
+            mapping = None
+            if column_mapping:
+                try:
+                    mapping = json.loads(column_mapping)
+                except:
+                    pass
+
+            # 执行导入
+            service = DataImportService()
+            if is_excel:
+                result = service.import_from_excel(
+                    file_path=tmp_path,
+                    column_mapping=mapping,
+                    batch_name=batch_name,
+                    skip_duplicates=skip_duplicates,
+                    update_existing=update_existing
+                )
+            else:
+                result = service.import_from_csv(
+                    file_path=tmp_path,
+                    column_mapping=mapping,
+                    batch_name=batch_name,
+                    skip_duplicates=skip_duplicates,
+                    update_existing=update_existing
+                )
+
+            return ImportResponse(**result)
+
+        finally:
+            # 删除临时文件
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"导入失败: {str(e)}")
+
+
+@app.get("/import/batches", response_model=List[Dict])
+async def list_import_batches(limit: int = 50):
+    """获取导入批次列表"""
+    from database.db_manager import get_db_context
+    from database.crud import ImportBatchCRUD
+
+    try:
+        with get_db_context() as session:
+            crud = ImportBatchCRUD(session)
+            batches = crud.list_batches(limit=limit)
+            return [batch.to_dict() for batch in batches]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/import/batch/{batch_id}", response_model=Dict)
+async def get_import_batch(batch_id: str):
+    """获取导入批次详情"""
+    from database.db_manager import get_db_context
+    from database.crud import ImportBatchCRUD
+
+    try:
+        with get_db_context() as session:
+            crud = ImportBatchCRUD(session)
+            batch = crud.get_batch(batch_id)
+            if not batch:
+                raise HTTPException(status_code=404, detail="批次不存在")
+            return batch.to_dict()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== 课程/商品查询接口 ====================
+
+class CourseSearchRequest(BaseModel):
+    """课程搜索请求"""
+    keyword: Optional[str] = None
+    resource_type: Optional[str] = None
+    limit: int = 20
+    offset: int = 0
+
+
+class CourseItem(BaseModel):
+    """课程项"""
+    product_id: str
+    title_zh: Optional[str] = None
+    resource_url: Optional[str] = None
+    resource_type: Optional[str] = None
+    external_id: Optional[str] = None
+    created_at: Optional[str] = None
+
+
+@app.post("/courses/search", response_model=List[CourseItem])
+async def search_courses(req: CourseSearchRequest):
+    """搜索课程"""
+    from database.db_manager import get_db_context
+    from database.models import ProductDB
+
+    try:
+        with get_db_context() as session:
+            query = session.query(ProductDB).filter(
+                ProductDB.external_id.isnot(None)
+            )
+
+            # 关键词搜索
+            if req.keyword:
+                query = query.filter(ProductDB.title_zh.contains(req.keyword))
+
+            # 资源类型筛选
+            if req.resource_type:
+                query = query.filter(ProductDB.resource_type == req.resource_type)
+
+            # 分页
+            courses = query.order_by(ProductDB.created_at.desc()).offset(req.offset).limit(req.limit).all()
+
+            return [
+                CourseItem(
+                    product_id=c.product_id,
+                    title_zh=c.title_zh,
+                    resource_url=c.resource_url,
+                    resource_type=c.resource_type,
+                    external_id=c.external_id,
+                    created_at=c.created_at.isoformat() if c.created_at else None
+                )
+                for c in courses
+            ]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/courses/stats")
+async def get_courses_stats():
+    """获取课程统计信息"""
+    from database.db_manager import get_db_context
+    from database.models import ProductDB
+
+    try:
+        with get_db_context() as session:
+            total = session.query(ProductDB).filter(
+                ProductDB.external_id.isnot(None)
+            ).count()
+
+            # 按类型统计
+            from sqlalchemy import func
+            type_stats = session.query(
+                ProductDB.resource_type,
+                func.count(ProductDB.product_id)
+            ).filter(
+                ProductDB.external_id.isnot(None)
+            ).group_by(ProductDB.resource_type).all()
+
+            return {
+                "total": total,
+                "by_type": {t or "unknown": c for t, c in type_stats}
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/courses/{course_id}")
+async def get_course(course_id: str):
+    """获取单个课程详情"""
+    from database.db_manager import get_db_context
+    from database.models import ProductDB, RawProductDataDB
+    from database.crud import RawProductDataCRUD
+    import json
+
+    try:
+        with get_db_context() as session:
+            course = session.query(ProductDB).filter(
+                ProductDB.product_id == course_id
+            ).first()
+
+            if not course:
+                raise HTTPException(status_code=404, detail="课程不存在")
+
+            # 获取原始数据
+            raw_data = None
+            if course.external_id:
+                raw_data_crud = RawProductDataCRUD(session)
+                raw_record = raw_data_crud.get_raw_data_by_external_id(course.external_id)
+                if raw_record:
+                    try:
+                        raw_data = json.loads(raw_record.raw_data)
+                    except:
+                        raw_data = raw_record.raw_data
+
+            return {
+                "standard": {
+                    "product_id": course.product_id,
+                    "title_zh": course.title_zh,
+                    "resource_url": course.resource_url,
+                    "resource_type": course.resource_type,
+                    "external_id": course.external_id,
+                    "description": course.description,
+                    "created_at": course.created_at.isoformat() if course.created_at else None,
+                    "updated_at": course.updated_at.isoformat() if course.updated_at else None,
+                },
+                "raw_data": raw_data
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)

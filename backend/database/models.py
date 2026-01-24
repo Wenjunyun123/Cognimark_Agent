@@ -23,7 +23,14 @@ class ProductDB(Base):
     main_market = Column(String(50), nullable=False, index=True)
     tags = Column(Text)
 
-    # 添加时间戳
+    # 扩展字段 - 支持课程/资源数据
+    title_zh = Column(String(500), comment="中文名称")
+    description = Column(Text, comment="商品描述")
+    resource_url = Column(String(1000), comment="资源链接")
+    resource_type = Column(String(50), comment="资源类型: baidu_pan, quark, aliyun, etc.")
+    external_id = Column(String(100), unique=True, comment="外部系统ID，用于去重")
+
+    # 时间戳
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -31,6 +38,7 @@ class ProductDB(Base):
     __table_args__ = (
         Index('idx_category_market', 'category', 'main_market'),
         Index('idx_price_rating', 'price_usd', 'avg_rating'),
+        Index('idx_external_id', 'external_id'),
     )
 
     def to_dict(self):
@@ -38,12 +46,17 @@ class ProductDB(Base):
         return {
             "product_id": self.product_id,
             "title_en": self.title_en,
+            "title_zh": self.title_zh,
             "category": self.category,
             "price_usd": self.price_usd,
             "avg_rating": self.avg_rating,
             "monthly_sales": self.monthly_sales,
             "main_market": self.main_market,
             "tags": self.tags,
+            "description": self.description,
+            "resource_url": self.resource_url,
+            "resource_type": self.resource_type,
+            "external_id": self.external_id,
         }
 
 
@@ -91,4 +104,65 @@ class UserDB(Base):
             "email": self.email,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "last_login": self.last_login.isoformat() if self.last_login else None,
+        }
+
+
+class ImportBatchDB(Base):
+    """导入批次记录表"""
+    __tablename__ = "import_batches"
+
+    id = Column(String(50), primary_key=True, default=lambda: str(uuid.uuid4()))
+    batch_name = Column(String(200), comment="批次名称")
+    source_file = Column(String(500), comment="来源文件名")
+    total_records = Column(Integer, default=0, comment="总记录数")
+    success_count = Column(Integer, default=0, comment="成功数量")
+    failed_count = Column(Integer, default=0, comment="失败数量")
+    skipped_count = Column(Integer, default=0, comment="跳过数量（已存在）")
+    status = Column(String(50), default="pending", comment="状态: pending, processing, completed, failed")
+    error_message = Column(Text, comment="错误信息")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    completed_at = Column(DateTime, comment="完成时间")
+
+    def to_dict(self):
+        """转换为字典"""
+        return {
+            "id": self.id,
+            "batch_name": self.batch_name,
+            "source_file": self.source_file,
+            "total_records": self.total_records,
+            "success_count": self.success_count,
+            "failed_count": self.failed_count,
+            "skipped_count": self.skipped_count,
+            "status": self.status,
+            "error_message": self.error_message,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+        }
+
+
+class RawProductDataDB(Base):
+    """原始商品信息表 - 存储完整原始数据"""
+    __tablename__ = "raw_product_data"
+
+    id = Column(String(50), primary_key=True, default=lambda: str(uuid.uuid4()))
+    external_id = Column(String(100), nullable=False, index=True, comment="关联ProductDB.external_id")
+    raw_data = Column(Text, nullable=False, comment="JSON格式存储完整原始数据")
+    source_file = Column(String(500), comment="来源文件名")
+    source_row = Column(Integer, comment="原始行号")
+    created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
+
+    # 添加索引优化查询
+    __table_args__ = (
+        Index('idx_raw_external_id', 'external_id'),
+    )
+
+    def to_dict(self):
+        """转换为字典"""
+        return {
+            "id": self.id,
+            "external_id": self.external_id,
+            "raw_data": self.raw_data,
+            "source_file": self.source_file,
+            "source_row": self.source_row,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
         }

@@ -7,7 +7,7 @@ from typing import List, Optional
 from datetime import datetime
 import uuid
 
-from .models import ProductDB, ChatHistoryDB, UserDB, Base
+from .models import ProductDB, ChatHistoryDB, UserDB, ImportBatchDB, RawProductDataDB, Base
 
 
 class ProductCRUD:
@@ -187,3 +187,104 @@ class UserCRUD:
     def list_users(self) -> List[UserDB]:
         """获取所有用户"""
         return self.session.query(UserDB).all()
+
+
+class ImportBatchCRUD:
+    """导入批次CRUD操作"""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def create_batch(self, batch_data: dict) -> ImportBatchDB:
+        """创建新导入批次"""
+        batch = ImportBatchDB(**batch_data)
+        self.session.add(batch)
+        self.session.commit()
+        self.session.refresh(batch)
+        return batch
+
+    def get_batch(self, batch_id: str) -> Optional[ImportBatchDB]:
+        """根据ID获取批次"""
+        return self.session.query(ImportBatchDB).filter(
+            ImportBatchDB.id == batch_id
+        ).first()
+
+    def update_batch(self, batch_id: str, update_data: dict) -> Optional[ImportBatchDB]:
+        """更新批次状态"""
+        batch = self.get_batch(batch_id)
+        if not batch:
+            return None
+
+        for key, value in update_data.items():
+            if hasattr(batch, key):
+                setattr(batch, key, value)
+
+        self.session.commit()
+        self.session.refresh(batch)
+        return batch
+
+    def list_batches(self, limit: int = 50) -> List[ImportBatchDB]:
+        """获取导入批次列表"""
+        return self.session.query(ImportBatchDB).order_by(
+            desc(ImportBatchDB.created_at)
+        ).limit(limit).all()
+
+    def get_product_by_external_id(self, external_id: str) -> Optional[ProductDB]:
+        """根据外部ID获取商品（用于去重检查）"""
+        return self.session.query(ProductDB).filter(
+            ProductDB.external_id == external_id
+        ).first()
+
+
+class RawProductDataCRUD:
+    """原始商品数据CRUD操作"""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def create_raw_data(self, raw_data: dict) -> RawProductDataDB:
+        """创建原始数据记录"""
+        data = RawProductDataDB(**raw_data)
+        self.session.add(data)
+        self.session.commit()
+        self.session.refresh(data)
+        return data
+
+    def get_raw_data_by_external_id(self, external_id: str) -> Optional[RawProductDataDB]:
+        """根据external_id获取原始数据"""
+        return self.session.query(RawProductDataDB).filter(
+            RawProductDataDB.external_id == external_id
+        ).first()
+
+    def bulk_create_raw_data(self, raw_data_list: List[dict]) -> List[RawProductDataDB]:
+        """批量创建原始数据记录"""
+        raw_records = [RawProductDataDB(**data) for data in raw_data_list]
+        self.session.add_all(raw_records)
+        self.session.commit()
+        for record in raw_records:
+            self.session.refresh(record)
+        return raw_records
+
+    def update_raw_data(self, external_id: str, update_data: dict) -> Optional[RawProductDataDB]:
+        """更新原始数据"""
+        raw_data = self.get_raw_data_by_external_id(external_id)
+        if not raw_data:
+            return None
+
+        for key, value in update_data.items():
+            if hasattr(raw_data, key):
+                setattr(raw_data, key, value)
+
+        self.session.commit()
+        self.session.refresh(raw_data)
+        return raw_data
+
+    def delete_raw_data(self, external_id: str) -> bool:
+        """删除原始数据"""
+        raw_data = self.get_raw_data_by_external_id(external_id)
+        if not raw_data:
+            return False
+
+        self.session.delete(raw_data)
+        self.session.commit()
+        return True
