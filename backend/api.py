@@ -15,8 +15,6 @@ from datetime import datetime
 from llm_service import DeepSeekLLM, LLMService
 from data_model import default_store, Product
 from agents import ProductSelectionAgent, MarketingCopyAgent
-from agents.rag_product_selection import RAGProductSelectionAgent
-from rag.vector_store import VectorStore
 
 # 初始化 FastAPI
 app = FastAPI(title="AI Agent E-Commerce API", version="2.0")
@@ -34,55 +32,6 @@ app.add_middleware(
 llm = DeepSeekLLM()
 selection_agent = ProductSelectionAgent(default_store, llm)
 copy_agent = MarketingCopyAgent(llm)
-
-# 初始化RAG服务（延迟加载）
-rag_vector_store = None
-rag_agent = None
-
-def init_rag_services():
-    """初始化RAG服务"""
-    global rag_vector_store, rag_agent
-
-    if rag_vector_store is None:
-        try:
-            # 创建向量存储
-            rag_vector_store = VectorStore(collection_name="products")
-
-            # 添加产品
-            products = default_store.list_products()
-            products_dict = []
-            for p in products:
-                products_dict.append({
-                    "product_id": p.product_id,
-                    "title_en": p.title_en,
-                    "category": p.category,
-                    "price_usd": p.price_usd,
-                    "avg_rating": p.avg_rating,
-                    "monthly_sales": p.monthly_sales,
-                    "main_market": p.main_market,
-                    "tags": p.tags,
-                })
-
-            # 检查是否已有数据
-            if rag_vector_store.get_product_count() == 0:
-                rag_vector_store.add_products(products_dict)
-
-            # 创建RAG Agent
-            llm_service = LLMService(provider="deepseek")
-            rag_agent = RAGProductSelectionAgent(
-                store=default_store,
-                llm=llm_service,
-                vector_store=rag_vector_store,
-            )
-
-            print("[RAG] Services initialized successfully")
-            return True
-
-        except Exception as e:
-            print(f"[RAG] Initialization failed: {e}")
-            return False
-
-    return True
 
 # --- Pydantic Models ---
 
@@ -137,18 +86,6 @@ class FileAnalysisResponse(BaseModel):
     summary: str
     data_preview: dict
     column_info: dict
-
-# RAG相关模型
-class RAGSelectionRequest(BaseModel):
-    campaign_description: str
-    target_market: Optional[str] = None
-    top_k: int = 3
-    use_reranking: bool = True
-
-class RAGSelectionResponse(BaseModel):
-    products: List[ProductDetail]
-    explanation: str
-    metadata: dict
 
 # --- 存储上传的数据（临时，实际应用中应使用数据库或缓存）
 uploaded_data_store = {}
@@ -453,60 +390,28 @@ async def chat_with_agent_stream(req: ChatRequest):
                 for filename, data_info in uploaded_data_store.items():
                     uploaded_data_context += f"- {filename}: {data_info['rows']}行 × {data_info['columns']}列\n"
 
-            # 📚 查询数据库中的课程数据上下文
+            # 📚 使用商品检索系统查询数据
             database_context = ""
             try:
-                from database.db_manager import get_db_context
-                from database.models import ProductDB
+                from rag.product_rag import get_product_rag
 
-                with get_db_context() as session:
-                    # 检测用户查询是否与课程相关
-                    keywords = ['课程', '资源', '教程', '商品', '产品', 'database', '数据', '有哪些', '黑马', '搜索', '查找']
-                    is_course_query = any(kw in user_message.lower() for kw in keywords)
+                # 获取商品检索实例
+                product_rag = get_product_rag()
 
-                    if is_course_query:
-                        # 尝试从用户消息中提取关键词
-                        search_keyword = None
-                        for kw in ['黑马', 'java', 'python', '前端', '运维', 'ai', '人工智能', '开发']:
-                            if kw in user_message.lower():
-                                search_keyword = kw
-                                break
+                # 执行检索
+                search_result = product_rag.search(
+                    query=user_message,
+                    top_k=20  # 返回最多20条结果
+                )
 
-                        # 查询课程数据
-                        query = session.query(ProductDB).filter(
-                            ProductDB.external_id.isnot(None)
-                        )
-
-                        # 如果有特定关键词，进行筛选
-                        if search_keyword:
-                            query = query.filter(ProductDB.title_zh.contains(search_keyword))
-                            # 限制返回数量，避免上下文过长
-                            courses = query.order_by(ProductDB.created_at.desc()).limit(50).all()
-                        else:
-                            # 没有特定关键词时，返回所有课程（用于"列出所有"类查询）
-                            # 但为了上下文长度考虑，限制返回数量
-                            courses = query.order_by(ProductDB.created_at.desc()).limit(100).all()
-
-                        total = session.query(ProductDB).filter(
-                            ProductDB.external_id.isnot(None)
-                        ).count()
-
-                        database_context = f"\n\n【数据库课程数据】\n"
-                        database_context += f"- 总计: {total} 条课程记录\n"
-                        if search_keyword:
-                            database_context += f"- 筛选关键词: {search_keyword}\n"
-                        database_context += f"- 返回结果: {len(courses)} 条\n"
-                        database_context += f"\n课程列表 (名称 | 链接):\n"
-
-                        for c in courses:
-                            title = c.title_zh or c.title_en or "未知"
-                            url = c.resource_url or "无链接"
-                            database_context += f"  · {title}\n    链接: {url}\n"
+                # 格式化结果
+                if search_result["total"] > 0:
+                    database_context = product_rag.format_for_llm(search_result)
 
             except Exception as e:
                 # 如果查询失败，不影响正常对话
                 import traceback
-                print(f"数据库查询错误: {e}")
+                print(f"产品RAG查询错误: {e}")
                 traceback.print_exc()
 
             # 构建 LLM 历史上下文
@@ -738,136 +643,6 @@ def delete_uploaded_file(filename: str):
     else:
         raise HTTPException(status_code=404, detail="文件不存在")
 
-# ==================== RAG相关端点 ====================
-
-@app.get("/rag/status")
-def get_rag_status():
-    """获取RAG服务状态"""
-    is_initialized = rag_vector_store is not None
-    product_count = 0
-    if is_initialized and rag_vector_store:
-        product_count = rag_vector_store.get_product_count()
-
-    return {
-        "initialized": is_initialized,
-        "product_count": product_count,
-        "vector_db_path": "chroma_db" if is_initialized else None,
-    }
-
-@app.post("/rag/recommend", response_model=RAGSelectionResponse)
-def rag_recommend_products(req: RAGSelectionRequest):
-    """
-    使用RAG进行智能推荐
-
-    与传统推荐的区别：
-    1. 使用语义搜索理解查询意图
-    2. 结合向量相似度和启发式评分
-    3. 返回详细的元数据
-    """
-    # 确保RAG服务已初始化
-    if not init_rag_services():
-        raise HTTPException(status_code=500, detail="RAG服务初始化失败")
-
-    try:
-        # 调用RAG Agent
-        products, explanation, metadata = rag_agent.recommend_products(
-            campaign_description=req.campaign_description,
-            target_market=req.target_market,
-            top_k=req.top_k,
-        )
-
-        # 转换为Pydantic模型
-        product_details = []
-        for p in products:
-            product_details.append(ProductDetail(
-                product_id=p.product_id,
-                title_en=p.title_en,
-                category=p.category,
-                price_usd=p.price_usd,
-                avg_rating=p.avg_rating,
-                monthly_sales=p.monthly_sales,
-                main_market=p.main_market,
-                tags=p.tags
-            ))
-
-        return RAGSelectionResponse(
-            products=product_details,
-            explanation=explanation,
-            metadata=metadata
-        )
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/rag/compare")
-def compare_recommendations(req: SelectionRequest):
-    """
-    对比传统方法和RAG方法的推荐结果
-
-    返回两种方法的推荐，便于比较效果
-    """
-    # 确保RAG服务已初始化
-    init_rag_services()
-
-    try:
-        # 传统方法
-        traditional_products, traditional_explanation = selection_agent.recommend_products(
-            campaign_description=req.campaign_description,
-            target_market=req.target_market,
-            top_k=req.top_k
-        )
-
-        # RAG方法
-        if rag_agent:
-            rag_products, rag_explanation, rag_metadata = rag_agent.recommend_products(
-                campaign_description=req.campaign_description,
-                target_market=req.target_market,
-                top_k=req.top_k,
-            )
-        else:
-            rag_products, rag_explanation, rag_metadata = [], "RAG not available", {}
-
-        # 转换产品格式
-        def convert_products(products):
-            return [
-                ProductDetail(
-                    product_id=p.product_id,
-                    title_en=p.title_en,
-                    category=p.category,
-                    price_usd=p.price_usd,
-                    avg_rating=p.avg_rating,
-                    monthly_sales=p.monthly_sales,
-                    main_market=p.main_market,
-                    tags=p.tags
-                )
-                for p in products
-            ]
-
-        return {
-            "traditional": {
-                "products": convert_products(traditional_products),
-                "explanation": traditional_explanation,
-                "method": "heuristic_scoring"
-            },
-            "rag": {
-                "products": convert_products(rag_products),
-                "explanation": rag_explanation,
-                "method": rag_metadata.get("method", "unknown"),
-                "metadata": rag_metadata
-            }
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/rag/initialize")
-def initialize_rag():
-    """手动初始化RAG服务"""
-    success = init_rag_services()
-    if success:
-        return {"message": "RAG服务初始化成功"}
-    else:
-        raise HTTPException(status_code=500, detail="RAG服务初始化失败")
 
 
 # ==================== 数据导入接口 ====================
@@ -1143,6 +918,98 @@ async def get_course(course_id: str):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# ==================== 产品RAG管理接口 ====================
+
+class RAGRebuildRequest(BaseModel):
+    """RAG重建请求"""
+    source: Optional[str] = None  # 指定数据源，None表示全部重建
+
+
+@app.get("/rag/product/status")
+def get_product_rag_status():
+    """获取产品RAG系统状态"""
+    from rag.product_rag import get_product_rag
+    from rag.rag_config import DATA_SOURCE_CONFIGS
+
+    try:
+        rag = get_product_rag()
+
+        status = {
+            "enabled": True,
+            "sources": []
+        }
+
+        for source_name, config in DATA_SOURCE_CONFIGS.items():
+            collection = rag.vector_stores.get(source_name)
+            status["sources"].append({
+                "name": source_name,
+                "collection_name": config.get("collection_name"),
+                "indexed_count": collection.count() if collection else 0,
+                "keywords": config.get("keywords", []),
+            })
+
+        return status
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/rag/product/rebuild")
+def rebuild_product_rag(req: RAGRebuildRequest):
+    """
+    重建产品RAG索引
+
+    当数据库数据更新后，需要调用此接口重建向量索引
+    """
+    from rag.product_rag import get_product_rag
+
+    try:
+        rag = get_product_rag()
+
+        if req.source:
+            # 重建指定数据源
+            if req.source in rag.vector_stores:
+                collection = rag.vector_stores[req.source]
+                rag._chroma_client.delete_collection(
+                    name=rag.rag_config.DATA_SOURCE_CONFIGS[req.source]["collection_name"]
+                )
+                # 重新创建
+                collection_name = rag.rag_config.DATA_SOURCE_CONFIGS[req.source]["collection_name"]
+                collection = rag._chroma_client.get_or_create_collection(name=collection_name)
+                rag.vector_stores[req.source] = collection
+                rag._build_index(req.source)
+                return {"message": f"数据源 {req.source} 索引重建成功"}
+            else:
+                raise HTTPException(status_code=404, detail=f"数据源 {req.source} 不存在")
+        else:
+            # 重建所有数据源
+            rag.rebuild_all_indexes()
+            return {"message": "所有数据源索引重建成功"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/rag/product/search")
+def product_rag_search(query: str, source: Optional[str] = None, top_k: int = 10):
+    """
+    直接测试产品RAG检索
+
+    用于调试和测试检索效果
+    """
+    from rag.product_rag import get_product_rag
+
+    try:
+        rag = get_product_rag()
+        result = rag.search(query=query, source_name=source, top_k=top_k)
+        return result
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)

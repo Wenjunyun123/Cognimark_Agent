@@ -10,10 +10,14 @@ Base = declarative_base()
 
 
 class ProductDB(Base):
-    """产品表"""
+    """产品表
+
+    用于存储电商商品信息
+    包含基础商品字段：ID、标题、分类、价格、评分、销量、市场、标签
+    """
     __tablename__ = "products"
 
-    # 主键使用字符串ID，与原有系统保持一致
+    # ==================== 基础字段（必需） ====================
     product_id = Column(String(50), primary_key=True)
     title_en = Column(String(255), nullable=False)
     category = Column(String(100), nullable=False, index=True)
@@ -23,22 +27,23 @@ class ProductDB(Base):
     main_market = Column(String(50), nullable=False, index=True)
     tags = Column(Text)
 
-    # 扩展字段 - 支持课程/资源数据
-    title_zh = Column(String(500), comment="中文名称")
-    description = Column(Text, comment="商品描述")
-    resource_url = Column(String(1000), comment="资源链接")
-    resource_type = Column(String(50), comment="资源类型: baidu_pan, quark, aliyun, etc.")
-    external_id = Column(String(100), unique=True, comment="外部系统ID，用于去重")
+    # ==================== 可选扩展字段 ====================
+    # 以下字段为可选，用于未来扩展（如添加中文支持、描述、链接等）
+    # 当前商品数据不使用这些字段，但保留以备将来需要
+    title_zh = Column(String(500), nullable=True, comment="中文名称（可选）")
+    description = Column(Text, nullable=True, comment="商品描述（可选）")
+    resource_url = Column(String(1000), nullable=True, comment="商品链接（可选）")
+    resource_type = Column(String(50), nullable=True, comment="资源类型（可选）")
+    external_id = Column(String(100), unique=True, nullable=True, comment="外部系统ID（可选，用于去重）")
 
-    # 时间戳
+    # ==================== 时间戳 ====================
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    # 添加索引优化查询
+    # ==================== 索引 ====================
     __table_args__ = (
         Index('idx_category_market', 'category', 'main_market'),
         Index('idx_price_rating', 'price_usd', 'avg_rating'),
-        Index('idx_external_id', 'external_id'),
     )
 
     def to_dict(self):
@@ -46,17 +51,16 @@ class ProductDB(Base):
         return {
             "product_id": self.product_id,
             "title_en": self.title_en,
-            "title_zh": self.title_zh,
             "category": self.category,
             "price_usd": self.price_usd,
             "avg_rating": self.avg_rating,
             "monthly_sales": self.monthly_sales,
             "main_market": self.main_market,
             "tags": self.tags,
+            # 可选字段（可能为None）
+            "title_zh": self.title_zh,
             "description": self.description,
             "resource_url": self.resource_url,
-            "resource_type": self.resource_type,
-            "external_id": self.external_id,
         }
 
 

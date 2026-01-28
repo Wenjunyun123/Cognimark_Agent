@@ -1,12 +1,15 @@
 """
-RAG (检索增强生成) 模块
+商品检索模块
 
-提供向量检索、语义搜索等功能
+提供商品检索、语义搜索等功能
 """
-from .vector_store import VectorStore
 from .embeddings import EmbeddingGenerator
+from .product_rag import ProductRAG, get_product_rag
+from . import rag_config
 
 __all__ = [
-    "VectorStore",
     "EmbeddingGenerator",
+    "ProductRAG",
+    "get_product_rag",
+    "rag_config",
 ]
