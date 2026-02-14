@@ -73,8 +73,9 @@ ENABLE_VECTOR_SEARCH = True
 # 混合检索时关键词的权重倍数（关键词匹配结果 * 这个倍数）
 KEYWORD_BOOST_SCORE = 2.0
 
-# 向量存储目录
-VECTOR_DB_DIR = "./chroma_db_universal"
+# 向量存储目录（使用绝对路径避免路径问题）
+import os
+VECTOR_DB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "chroma_db_universal")
 
 # 嵌入模型（可选: "all-MiniLM-L6-v2", "paraphrase-multilingual-MiniLM-L12-v2"支持中文）
 EMBEDDING_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"  # 支持中英文

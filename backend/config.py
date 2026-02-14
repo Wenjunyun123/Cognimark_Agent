@@ -17,7 +17,7 @@ DEEPSEEK_BASE_URL = os.getenv(
 )
 DEEPSEEK_MODEL = os.getenv(
     "DEEPSEEK_MODEL",
-    "deepseek-chat"  # 或 "deepseek-coder"
+    "deepseek-reasoner"  # 或 "deepseek-coder"
 )
 
 # ==================== Minimax 配置 ====================

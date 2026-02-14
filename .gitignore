@@ -64,6 +64,10 @@ __tests__/
 *.xls
 *.csv
 
+# 配置文件
+config.py
+
+
 
 
 
