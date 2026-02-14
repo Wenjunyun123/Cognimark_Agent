@@ -1,9 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Send, Copy, ThumbsUp, Loader2, Sparkles, Search, Image as ImageIcon, FileText, Plus, ChevronDown, Globe, TrendingUp, Package, BarChart3, Upload, X, FileSpreadsheet, ArrowDown } from 'lucide-react';
+import { Send, Copy, ThumbsUp, Loader2, Sparkles, TrendingUp, Package, BarChart3, Upload, X, FileSpreadsheet, ArrowDown, ChevronDown, Globe } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { chatWithAgent, chatWithAgentStream, getProducts, uploadExcel, getUploadedFiles, deleteUploadedFile, UploadedFile } from '../services/api';
+import { chatWithAgentStream, getProducts, uploadExcel, getUploadedFiles, deleteUploadedFile, UploadedFile } from '../services/api';
 import { SessionManager, ChatSession } from '../utils/sessionManager';
 import { cn } from '../utils/cn';
 
@@ -32,12 +32,25 @@ export default function Dashboard() {
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
   const [autoScroll, setAutoScroll] = useState(true); // 控制自动滚动
+  const [showSlashMenu, setShowSlashMenu] = useState(false);
+  const [slashCommandIndex, setSlashCommandIndex] = useState(0);
   const modeMenuRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null); // 新增：消息末尾引用
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const slashMenuRef = useRef<HTMLDivElement>(null);
   const location = useLocation();
   const navigate = useNavigate();
+
+  // 斜杠命令定义
+  const SLASH_COMMANDS = [
+    { id: 'market', label: '市场趋势分析', icon: TrendingUp, desc: '分析市场动态和竞争格局', color: 'text-blue-500' },
+    { id: 'selection', label: '选品策略建议', icon: Package, desc: '基于数据提供选品推荐', color: 'text-green-500' },
+    { id: 'ads', label: '广告优化建议', icon: BarChart3, desc: '优化广告投放策略', color: 'text-purple-500' },
+    { id: 'conversion', label: '转化率优化', icon: Sparkles, desc: '提升转化率和用户体验', color: 'text-orange-500' },
+    { id: 'upload', label: '上传数据文件', icon: FileSpreadsheet, desc: '上传 Excel/CSV 进行分析', color: 'text-indigo-500' },
+  ];
 
   useEffect(() => {
     const hour = new Date().getHours();
@@ -62,12 +75,73 @@ export default function Dashboard() {
       if (modeMenuRef.current && !modeMenuRef.current.contains(event.target as Node)) {
         setShowModeMenu(false);
       }
+      if (slashMenuRef.current && !slashMenuRef.current.contains(event.target as Node)) {
+        setShowSlashMenu(false);
+      }
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
     };
   }, []);
+
+  // 自动调整 textarea 高度
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 200) + 'px';
+    }
+  }, [inputValue]);
+
+  // 处理斜杠命令选择
+  const handleSlashCommand = (commandId: string) => {
+    setShowSlashMenu(false);
+    if (commandId === 'upload') {
+      fileInputRef.current?.click();
+    } else {
+      setSelectedMode(commandId);
+      const command = SLASH_COMMANDS.find(c => c.id === commandId);
+      if (command) {
+        setInputValue(`[${command.label}] `);
+        textareaRef.current?.focus();
+      }
+    }
+  };
+
+  // 处理输入变化，检测斜杠命令
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value;
+    setInputValue(value);
+    
+    // 检测是否只输入了 "/" 或在开头输入 "/"
+    if (value === '/' || (value.startsWith('/') && !value.includes(' '))) {
+      setShowSlashMenu(true);
+      setSlashCommandIndex(0);
+    } else {
+      setShowSlashMenu(false);
+    }
+  };
+
+  // 处理键盘导航斜杠菜单
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (showSlashMenu) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSlashCommandIndex(prev => (prev + 1) % SLASH_COMMANDS.length);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSlashCommandIndex(prev => (prev - 1 + SLASH_COMMANDS.length) % SLASH_COMMANDS.length);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        handleSlashCommand(SLASH_COMMANDS[slashCommandIndex].id);
+      } else if (e.key === 'Escape') {
+        setShowSlashMenu(false);
+      }
+    } else if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleGenerate();
+    }
+  };
 
   const loadProducts = async () => {
     try {
@@ -480,17 +554,53 @@ export default function Dashboard() {
               </div>
             )}
 
+            {/* 斜杠命令菜单 */}
+            {showSlashMenu && (
+              <div 
+                ref={slashMenuRef}
+                className="absolute bottom-full left-4 mb-2 w-80 bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 overflow-hidden z-50 animate-fadeIn"
+              >
+                <div className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700">
+                  快捷命令
+                </div>
+                <div className="py-1">
+                  {SLASH_COMMANDS.map((cmd, index) => {
+                    const Icon = cmd.icon;
+                    return (
+                      <button
+                        key={cmd.id}
+                        onClick={() => handleSlashCommand(cmd.id)}
+                        className={cn(
+                          "w-full flex items-center gap-3 px-4 py-3 text-left transition-colors",
+                          index === slashCommandIndex 
+                            ? "bg-indigo-50 dark:bg-indigo-900/20" 
+                            : "hover:bg-gray-50 dark:hover:bg-gray-700"
+                        )}
+                      >
+                        <Icon className={cn("w-5 h-5", cmd.color)} />
+                        <div className="flex-1">
+                          <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                            {cmd.label}
+                          </p>
+                          <p className="text-xs text-gray-500 dark:text-gray-400">
+                            {cmd.desc}
+                          </p>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             <textarea
-              className="w-full bg-transparent border-none focus:ring-0 focus:outline-none resize-none text-lg placeholder-gray-400 dark:placeholder-gray-500 text-gray-700 dark:text-gray-200 transition-colors h-16 relative z-10"
-              placeholder="和 CogniMark 说点什么"
+              ref={textareaRef}
+              className="w-full bg-transparent border-none focus:ring-0 focus:outline-none resize-none text-lg placeholder-gray-400 dark:placeholder-gray-500 text-gray-700 dark:text-gray-200 transition-colors min-h-[24px] max-h-[200px] relative z-10"
+              placeholder="和 CogniMark 说点什么 (输入 / 查看快捷命令)"
               value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  handleGenerate();
-                }
-              }}
+              onChange={handleInputChange}
+              onKeyDown={handleInputKeyDown}
+              rows={1}
             />
             
             <div className="flex justify-between items-center mt-4 px-1 relative z-10">
@@ -684,7 +794,7 @@ export default function Dashboard() {
 
             <div className="space-y-2">
               {/* Thinking内容 - 无外框 */}
-              {msg.thinking && (
+              {(msg.thinking || msg.isThinking) && (
                 <div className="text-xs">
                   <div
                     className="flex items-center gap-1.5 mb-1.5 cursor-pointer select-none"
@@ -716,14 +826,25 @@ export default function Dashboard() {
                   {/* Thinking内容 - 思考中或未折叠时显示 */}
                   {(msg.isThinking || !msg.thinkingCollapsed) && (
                     <div className="animate-fadeIn px-3 text-gray-500/70 dark:text-gray-400/60">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.thinking}</ReactMarkdown>
+                      {msg.thinking ? (
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.thinking}</ReactMarkdown>
+                      ) : (
+                        <div className="flex items-center gap-1 text-xs opacity-50 py-1">
+                          <span>思考中</span>
+                          <span className="flex gap-0.5">
+                            <span className="w-1 h-1 bg-current rounded-full animate-bounce" style={{ animationDelay: '0s' }}></span>
+                            <span className="w-1 h-1 bg-current rounded-full animate-bounce" style={{ animationDelay: '0.15s' }}></span>
+                            <span className="w-1 h-1 bg-current rounded-full animate-bounce" style={{ animationDelay: '0.3s' }}></span>
+                          </span>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
               )}
 
-              {/* 只在有正式内容时才显示白框 */}
-              {msg.content && (
+              {/* 只在有正式内容或加载中时才显示白框 */}
+              {(msg.content || msg.isLoading) && (
                 <div className={cn(
                   "p-4 rounded-2xl text-sm leading-relaxed shadow-sm transition-colors duration-300",
                   msg.role === 'user'
@@ -892,24 +1013,64 @@ export default function Dashboard() {
         <div className="max-w-3xl mx-auto relative group pointer-events-auto">
            <div className="absolute -inset-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 rounded-full opacity-20 group-hover:opacity-30 blur-md transition-opacity duration-500" />
 
-           <div className="relative bg-white/95 dark:bg-gray-800/95 backdrop-blur-md rounded-full border border-gray-200 dark:border-gray-700 shadow-xl flex items-center p-1.5 transition-all duration-300 hover:shadow-2xl">
-              <div className="pl-3 pr-2 text-indigo-600 dark:text-indigo-400">
+           {/* 斜杠命令菜单 - 底部输入框 */}
+           {showSlashMenu && (
+              <div 
+                ref={slashMenuRef}
+                className="absolute bottom-full left-0 mb-2 w-72 bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 overflow-hidden z-50 animate-fadeIn"
+              >
+                <div className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700">
+                  快捷命令
+                </div>
+                <div className="py-1 max-h-60 overflow-y-auto">
+                  {SLASH_COMMANDS.map((cmd, index) => {
+                    const Icon = cmd.icon;
+                    return (
+                      <button
+                        key={cmd.id}
+                        onClick={() => handleSlashCommand(cmd.id)}
+                        className={cn(
+                          "w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors",
+                          index === slashCommandIndex 
+                            ? "bg-indigo-50 dark:bg-indigo-900/20" 
+                            : "hover:bg-gray-50 dark:hover:bg-gray-700"
+                        )}
+                      >
+                        <Icon className={cn("w-4 h-4", cmd.color)} />
+                        <div className="flex-1">
+                          <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                            {cmd.label}
+                          </p>
+                          <p className="text-xs text-gray-500 dark:text-gray-400">
+                            {cmd.desc}
+                          </p>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+           <div className="relative bg-white/95 dark:bg-gray-800/95 backdrop-blur-md rounded-2xl border border-gray-200 dark:border-gray-700 shadow-xl flex items-end p-2 transition-all duration-300 hover:shadow-2xl">
+              <div className="pl-2 pb-2 text-indigo-600 dark:text-indigo-400">
                 <Sparkles className={cn("w-5 h-5", isGenerating && "animate-pulse")} />
               </div>
 
-              <input
-                type="text"
-                className="flex-1 bg-transparent border-none focus:ring-0 focus:outline-none text-gray-700 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 h-10"
-                placeholder="发送消息..."
+              <textarea
+                ref={textareaRef}
+                className="flex-1 bg-transparent border-none focus:ring-0 focus:outline-none resize-none text-gray-700 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 min-h-[40px] max-h-[120px] py-2.5 px-2"
+                placeholder="发送消息... (输入 / 查看快捷命令)"
                 value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleGenerate()}
+                onChange={handleInputChange}
+                onKeyDown={handleInputKeyDown}
+                rows={1}
               />
 
               {isGenerating ? (
                 <button
                   onClick={handleStopGenerating}
-                  className="p-2.5 bg-red-600 hover:bg-red-700 text-white rounded-full transition-all duration-300 shadow-sm hover:shadow-md hover:scale-105"
+                  className="mb-1 p-2 bg-red-600 hover:bg-red-700 text-white rounded-full transition-all duration-300 shadow-sm hover:shadow-md hover:scale-105"
                   title="停止生成"
                 >
                   <X className="w-4 h-4" />

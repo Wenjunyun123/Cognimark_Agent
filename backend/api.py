@@ -235,6 +235,15 @@ def chat_with_agent(req: ChatRequest):
             uploaded_data_context = "\n\n【已上传的外部数据】\n"
             for filename, data_info in uploaded_data_store.items():
                 uploaded_data_context += f"- {filename}: {data_info['rows']}行 × {data_info['columns']}列 | 列名: {', '.join(data_info['column_names'])}\n"
+                # 添加数据预览（关键修复：让 AI 能看到文件内容）
+                if 'dataframe' in data_info:
+                    try:
+                        df = data_info['dataframe']
+                        # 预览前 10 行，使用 CSV 格式
+                        preview = df.head(10).to_csv(index=False)
+                        uploaded_data_context += f"\n[数据预览 - 前10行]:\n{preview}\n\n"
+                    except Exception as e:
+                        print(f"Error generating preview for {filename}: {e}")
 
         # 收集历史对话上下文
         history_context = ""
@@ -389,6 +398,15 @@ async def chat_with_agent_stream(req: ChatRequest):
                 uploaded_data_context = "\n\n【已上传的外部数据】\n"
                 for filename, data_info in uploaded_data_store.items():
                     uploaded_data_context += f"- {filename}: {data_info['rows']}行 × {data_info['columns']}列\n"
+                    # 添加数据预览（关键修复：让 AI 能看到文件内容）
+                    if 'dataframe' in data_info:
+                        try:
+                            df = data_info['dataframe']
+                            # 预览前 10 行，使用 CSV 格式
+                            preview = df.head(10).to_csv(index=False)
+                            uploaded_data_context += f"\n[数据预览 - 前10行]:\n{preview}\n\n"
+                        except Exception as e:
+                            print(f"Error generating preview for {filename}: {e}")
 
             # 📚 使用商品检索系统查询数据
             database_context = ""

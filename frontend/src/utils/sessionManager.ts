@@ -17,14 +17,16 @@ const STORAGE_KEY = 'cognimark_sessions';
 const CURRENT_SESSION_KEY = 'cognimark_current_session';
 
 export class SessionManager {
-  // 获取所有会话
+  // 获取所有会话（按时间倒序）
   static getAllSessions(): ChatSession[] {
     const data = localStorage.getItem(STORAGE_KEY);
     if (!data) return [];
     try {
       const sessions = JSON.parse(data);
-      // 过滤掉临时会话（防止意外保存）
-      return sessions.filter((s: ChatSession) => !s.isTemporary);
+      // 过滤掉临时会话，并按更新时间倒序排列
+      return sessions
+        .filter((s: ChatSession) => !s.isTemporary)
+        .sort((a: ChatSession, b: ChatSession) => b.updatedAt - a.updatedAt);
     } catch {
       return [];
     }
@@ -80,12 +82,15 @@ export class SessionManager {
     };
   }
 
-  // 更新会话标题（根据第一条消息）
-  static updateSessionTitle(session: ChatSession): ChatSession {
-    if (session.messages.length > 0 && session.title === '新对话') {
+  // 更新会话标题（根据第一条消息或手动修改）
+  static updateSessionTitle(session: ChatSession, newTitle?: string): ChatSession {
+    if (newTitle) {
+      session.title = newTitle;
+    } else if (session.messages.length > 0 && (session.title === '新对话' || session.title.startsWith('New Chat'))) {
       const firstUserMsg = session.messages.find(m => m.role === 'user');
       if (firstUserMsg) {
-        session.title = firstUserMsg.content.slice(0, 30) + (firstUserMsg.content.length > 30 ? '...' : '');
+        // 截取前 20 个字符作为标题
+        session.title = firstUserMsg.content.slice(0, 20).trim() || '新对话';
       }
     }
     return session;
