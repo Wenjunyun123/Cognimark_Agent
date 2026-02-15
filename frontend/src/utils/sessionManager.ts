@@ -1,4 +1,3 @@
-// 会话管理工具
 export interface ChatSession {
   id: string;
   title: string;
@@ -6,7 +5,9 @@ export interface ChatSession {
     id: string;
     role: 'user' | 'assistant';
     content: string;
-    thinking?: string; // 添加thinking字段
+    thinking?: string;
+    thinkingStartTime?: number;
+    thinkingEndTime?: number;
   }>;
   createdAt: number;
   updatedAt: number;

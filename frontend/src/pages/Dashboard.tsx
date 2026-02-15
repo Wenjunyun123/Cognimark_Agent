@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Send, Copy, ThumbsUp, Loader2, Sparkles, TrendingUp, Package, BarChart3, Upload, X, FileSpreadsheet, ArrowDown, ChevronDown, Globe } from 'lucide-react';
+import { Send, Copy, ThumbsUp, Loader2, Sparkles, TrendingUp, Package, BarChart3, Upload, X, FileSpreadsheet, ArrowDown, ChevronDown } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { chatWithAgentStream, getProducts, uploadExcel, getUploadedFiles, deleteUploadedFile, getChatHistory, UploadedFile } from '../services/api';
@@ -14,7 +14,9 @@ interface Message {
   thinking?: string;
   isLoading?: boolean;
   isThinking?: boolean;
-  thinkingCollapsed?: boolean; // 控制thinking折叠状态
+  thinkingCollapsed?: boolean;
+  thinkingStartTime?: number;
+  thinkingEndTime?: number;
 }
 
 export default function Dashboard() {
@@ -237,11 +239,12 @@ export default function Dashboard() {
         try {
           const backendHistory = await getChatHistory(sessionId);
           if (backendHistory && backendHistory.length > 0) {
-            // 同步后端历史到前端
-            session.messages = backendHistory.map((msg: any) => ({
+            const existingMessages = session.messages || [];
+            session.messages = backendHistory.map((msg: any, index: number) => ({
               id: Math.random().toString(36).substr(2, 9),
               role: msg.role,
-              content: msg.content
+              content: msg.content,
+              thinking: msg.thinking || existingMessages[index]?.thinking
             }));
             SessionManager.saveSession(session);
           }
@@ -439,13 +442,13 @@ export default function Dashboard() {
         // onThinkingStart
         () => {
           setMessages(prev => prev.map(msg =>
-            msg.id === loadingId ? { ...msg, isThinking: true, isLoading: false } : msg
+            msg.id === loadingId ? { ...msg, isThinking: true, isLoading: false, thinkingStartTime: Date.now() } : msg
           ));
         },
         // onThinkingEnd
         () => {
           setMessages(prev => prev.map(msg =>
-            msg.id === loadingId ? { ...msg, isThinking: false, thinkingCollapsed: true } : msg
+            msg.id === loadingId ? { ...msg, isThinking: false, thinkingCollapsed: true, thinkingEndTime: Date.now() } : msg
           ));
         },
         // onComplete
@@ -464,12 +467,13 @@ export default function Dashboard() {
           const updatedMessages = [...messages, userMessage, assistantMessage];
 
           if (currentSession && !currentSession.isTemporary) {
-            // 保存thinking内容到会话
             currentSession.messages = updatedMessages.map(m => ({
               id: m.id,
               role: m.role,
               content: m.content,
-              thinking: m.thinking // 保存thinking
+              thinking: m.thinking,
+              thinkingStartTime: m.thinkingStartTime,
+              thinkingEndTime: m.thinkingEndTime
             }));
             currentSession.updatedAt = Date.now();
 
@@ -749,10 +753,7 @@ export default function Dashboard() {
                    )}
                  </div>
                  
-                 <div className="flex items-center gap-2 px-3 py-1.5 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-full cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors shadow-sm">
-                    <Globe className="w-4 h-4 text-gray-900 dark:text-white" />
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">搜索</span>
-                 </div>
+
               </div>
 
               {/* Right Actions: Send/Stop Button */}
@@ -808,14 +809,12 @@ export default function Dashboard() {
             )}
 
             <div className="space-y-2">
-              {/* Thinking内容 - 无外框 */}
               {(msg.thinking || msg.isThinking) && (
                 <div className="text-xs">
                   <div
                     className="flex items-center gap-1.5 mb-1.5 cursor-pointer select-none"
                     onClick={() => {
                       if (!msg.isThinking) {
-                        // 切换折叠状态
                         setMessages(prev => prev.map(m =>
                           m.id === msg.id ? { ...m, thinkingCollapsed: !m.thinkingCollapsed } : m
                         ));
@@ -824,13 +823,13 @@ export default function Dashboard() {
                   >
                     <Sparkles className={cn(
                       "w-3.5 h-3.5",
-                      // 浅绿色，并在思考时时隐时现
                       msg.isThinking
-                        ? "text-green-400 animate-pulse"
-                        : "text-green-500/70 dark:text-green-400/70"
+                        ? "text-green-400 animate-spin"
+                        : "text-green-500/70 dark:text-green-400/70 animate-pulse"
                     )} />
-                    <span className="font-medium text-gray-600 dark:text-gray-300">thinking</span>
-                    {/* 折叠/展开箭头 */}
+                    <span className="font-medium text-gray-600 dark:text-gray-300">
+                      {msg.isThinking ? 'thinking...' : msg.thinkingEndTime && msg.thinkingStartTime ? `Thought completed (${((msg.thinkingEndTime - msg.thinkingStartTime) / 1000).toFixed(1)}s)` : 'thinking'}
+                    </span>
                     {!msg.isThinking && (
                       <ChevronDown className={cn(
                         "w-3 h-3 ml-auto transition-transform duration-200",
@@ -838,14 +837,12 @@ export default function Dashboard() {
                       )} />
                     )}
                   </div>
-                  {/* Thinking内容 - 思考中或未折叠时显示 */}
                   {(msg.isThinking || !msg.thinkingCollapsed) && (
                     <div className="animate-fadeIn px-3 text-gray-500/70 dark:text-gray-400/60">
                       {msg.thinking ? (
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.thinking}</ReactMarkdown>
                       ) : (
                         <div className="flex items-center gap-1 text-xs opacity-50 py-1">
-                          <span>思考中</span>
                           <span className="flex gap-0.5">
                             <span className="w-1 h-1 bg-current rounded-full animate-bounce" style={{ animationDelay: '0s' }}></span>
                             <span className="w-1 h-1 bg-current rounded-full animate-bounce" style={{ animationDelay: '0.15s' }}></span>

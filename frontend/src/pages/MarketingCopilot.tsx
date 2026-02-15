@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
-import { Send, Copy, ThumbsUp, Loader2, Sparkles, Search, Image as ImageIcon, FileText, Plus, ChevronDown, Globe } from 'lucide-react';
+import { Send, Copy, ThumbsUp, Sparkles, ChevronDown } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { getProducts, generateMarketingCopy, chatWithAgentStream } from '../services/api';
+import { getProducts, chatWithAgentStream } from '../services/api';
 import { cn } from '../utils/cn';
+import { SessionManager, ChatSession } from '../utils/sessionManager';
 
 interface Message {
   id: string;
@@ -13,10 +14,13 @@ interface Message {
   thinking?: string;
   isLoading?: boolean;
   isThinking?: boolean;
+  thinkingCollapsed?: boolean;
+  thinkingStartTime?: number;
+  thinkingEndTime?: number;
 }
 
 export default function MarketingCopilot() {
-  const [messages, setMessages] = useState<Message[]>([]); 
+  const [messages, setMessages] = useState<Message[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [greeting, setGreeting] = useState('');
@@ -24,7 +28,10 @@ export default function MarketingCopilot() {
   const [selectedProduct, setSelectedProduct] = useState('');
   const [targetLanguage, setTargetLanguage] = useState('Chinese');
   const [channel, setChannel] = useState('Facebook Ads');
+  const [currentSession, setCurrentSession] = useState<ChatSession | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const location = useLocation();
 
   useEffect(() => {
@@ -54,14 +61,30 @@ export default function MarketingCopilot() {
     if (params.get('new')) {
       setMessages([]);
       setInputValue('');
+      setCurrentSession(null);
     }
   }, [location.search]);
 
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    const marketingSession = SessionManager.getAllSessions().find(s => s.id.startsWith('marketing_'));
+    if (marketingSession) {
+      setCurrentSession(marketingSession);
+      setMessages(marketingSession.messages as Message[]);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
     }
   }, [messages]);
+
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + 'px';
+    }
+  }, [inputValue]);
 
   const handleGenerate = async (customPrompt?: string) => {
     const promptText = customPrompt || inputValue;
@@ -77,83 +100,94 @@ export default function MarketingCopilot() {
     setInputValue('');
     setIsGenerating(true);
 
-    const loadingId = (Date.now() + 1).toString();
-    setMessages(prev => [...prev, { id: loadingId, role: 'assistant', content: '', thinking: '', isLoading: true, isThinking: false }]);
+      const loadingId = (Date.now() + 1).toString();
+    setMessages(prev => [...prev, { id: loadingId, role: 'assistant', content: '', thinking: '', isLoading: true, isThinking: false, thinkingCollapsed: false }]);
 
     try {
-      // 如果有自定义提示，使用流式聊天API获取thinking
-      if (customPrompt) {
-        let thinkingText = '';
-        let responseText = '';
+      let thinkingText = '';
+      let responseText = '';
 
-        await chatWithAgentStream(
-          {
-            message: `我正在使用产品 ${selectedProduct}（${products.find(p => p.product_id === selectedProduct)?.title_en}），请帮我：${customPrompt}`,
-          },
-          // onThinking
-          (content) => {
-            thinkingText += content;
-            setMessages(prev => prev.map(msg =>
-              msg.id === loadingId ? { ...msg, thinking: thinkingText } : msg
-            ));
-          },
-          // onResponse
-          (content) => {
-            responseText += content;
-            setMessages(prev => prev.map(msg =>
-              msg.id === loadingId ? { ...msg, content: responseText } : msg
-            ));
-          },
-          // onThinkingStart
-          () => {
-            setMessages(prev => prev.map(msg =>
-              msg.id === loadingId ? { ...msg, isThinking: true, isLoading: false } : msg
-            ));
-          },
-          // onThinkingEnd
-          () => {
-            setMessages(prev => prev.map(msg =>
-              msg.id === loadingId ? { ...msg, isThinking: false } : msg
-            ));
-          },
-          // onComplete
-          () => {
-            setIsGenerating(false);
-          },
-          // onError
-          (error) => {
-            console.error(error);
-            setMessages(prev => prev.map(msg =>
-              msg.id === loadingId ? { ...msg, isLoading: false, isThinking: false, content: '连接后端失败，请确保 API 服务正在运行 (http://127.0.0.1:8000)' } : msg
-            ));
-            setIsGenerating(false);
-          }
-        );
-      } else {
-        // 使用原来的营销文案API
-        const response = await generateMarketingCopy({
-          product_id: selectedProduct,
-          target_language: targetLanguage,
-          channel: channel
-        });
+      // 统一使用流式聊天API，确保与Dashboard一致的体验
+      const promptMessage = customPrompt
+        ? `我正在使用产品 ${selectedProduct}（${products.find(p => p.product_id === selectedProduct)?.title_en}），请帮我：${customPrompt}`
+        : `请为产品 ${selectedProduct}（${products.find(p => p.product_id === selectedProduct)?.title_en}）生成 ${channel} 的 ${targetLanguage} 营销文案`;
 
-        setMessages(prev => prev.map(msg =>
-          msg.id === loadingId ? { ...msg, isLoading: false, content: '' } : msg
-        ));
-
-        let currentText = '';
-        const text = response.copy_text;
-        for (let i = 0; i < text.length; i += 5) {
-          const chunk = text.slice(i, i + 5);
-          currentText += chunk;
+      await chatWithAgentStream(
+        {
+          message: promptMessage,
+        },
+        // onThinking
+        (content) => {
+          thinkingText += content;
           setMessages(prev => prev.map(msg =>
-            msg.id === loadingId ? { ...msg, content: currentText } : msg
+            msg.id === loadingId ? { ...msg, thinking: thinkingText } : msg
           ));
-          await new Promise(resolve => setTimeout(resolve, 10));
-        }
+        },
+        // onResponse
+        (content) => {
+          responseText += content;
+          setMessages(prev => prev.map(msg =>
+            msg.id === loadingId ? { ...msg, content: responseText } : msg
+          ));
+        },
+        // onThinkingStart
+        () => {
+          setMessages(prev => prev.map(msg =>
+            msg.id === loadingId ? { ...msg, isThinking: true, isLoading: false, thinkingStartTime: Date.now() } : msg
+          ));
+        },
+        // onThinkingEnd
+        () => {
+          setMessages(prev => prev.map(msg =>
+            msg.id === loadingId ? { ...msg, isThinking: false, thinkingCollapsed: true, thinkingEndTime: Date.now() } : msg
+          ));
+        },
+        // onComplete
+        () => {
+          setIsGenerating(false);
 
-        setIsGenerating(false);
-      }
+          const finalAssistantMessage: Message = {
+            id: loadingId,
+            role: 'assistant',
+            content: responseText,
+            thinking: thinkingText,
+            isLoading: false,
+            isThinking: false,
+            thinkingCollapsed: true,
+            thinkingStartTime: messages.find(m => m.id === loadingId)?.thinkingStartTime,
+            thinkingEndTime: Date.now()
+          };
+
+          const updatedMessages = [...messages.filter(m => m.id !== loadingId), userMessage, finalAssistantMessage];
+
+          let session = currentSession;
+          if (!session) {
+            session = SessionManager.createSession('营销文案对话', false);
+            session.id = 'marketing_' + session.id;
+            setCurrentSession(session);
+          }
+
+          session.messages = updatedMessages.map(m => ({
+            id: m.id,
+            role: m.role,
+            content: m.content,
+            thinking: m.thinking,
+            thinkingStartTime: m.thinkingStartTime,
+            thinkingEndTime: m.thinkingEndTime
+          }));
+          session.updatedAt = Date.now();
+          SessionManager.saveSession(session);
+          setMessages(updatedMessages);
+        },
+        // onError
+        (error) => {
+          console.error(error);
+          setMessages(prev => prev.map(msg =>
+            msg.id === loadingId ? { ...msg, isLoading: false, isThinking: false, content: '连接后端失败，请确保 API 服务正在运行 (http://127.0.0.1:8000)' } : msg
+          ));
+          setIsGenerating(false);
+        }
+      );
 
     } catch (error) {
       console.error(error);
@@ -239,30 +273,7 @@ export default function MarketingCopilot() {
             </button>
           </div>
 
-          {/* Quick Actions */}
-          <div className="flex flex-wrap justify-center gap-3">
-            <button 
-              onClick={() => handleGenerate("分析一下这个产品的竞品情况和市场竞争格局")}
-              className="flex items-center gap-2 px-4 py-2 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full text-sm text-gray-600 dark:text-gray-300 transition-colors border border-transparent hover:border-gray-200 dark:hover:border-gray-600"
-            >
-              <Search className="w-4 h-4 text-blue-500" />
-              竞品分析
-            </button>
-            <button 
-              onClick={() => handleGenerate("为这个产品生成 5 个高转化的 SEO 标题，包含核心关键词")}
-              className="flex items-center gap-2 px-4 py-2 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full text-sm text-gray-600 dark:text-gray-300 transition-colors border border-transparent hover:border-gray-200 dark:hover:border-gray-600"
-            >
-              <FileText className="w-4 h-4 text-green-500" />
-              生成 SEO 标题
-            </button>
-            <button 
-              onClick={() => handleGenerate("为这个产品写一段 Instagram 推广文案，语气轻松活泼，带 Emoji")}
-              className="flex items-center gap-2 px-4 py-2 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full text-sm text-gray-600 dark:text-gray-300 transition-colors border border-transparent hover:border-gray-200 dark:hover:border-gray-600"
-            >
-              <ImageIcon className="w-4 h-4 text-pink-500" />
-              社媒推广文案
-            </button>
-          </div>
+
         </div>
       </div>
     );
@@ -290,18 +301,54 @@ export default function MarketingCopilot() {
             )}
 
             <div className="space-y-2">
-              {/* Thinking内容 */}
-              {msg.thinking && (
-                <div className="bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded-xl p-3 text-xs text-gray-600 dark:text-gray-400">
-                  <div className="flex items-center gap-1 mb-1">
-                    <Sparkles className="w-3 h-3 text-indigo-500" />
-                    <span className="font-medium">思考过程</span>
+              {(msg.thinking || msg.isThinking) && (
+                <div className="text-xs">
+                  <div
+                    className="flex items-center gap-1.5 mb-1.5 cursor-pointer select-none"
+                    onClick={() => {
+                      if (!msg.isThinking) {
+                        setMessages(prev => prev.map(m =>
+                          m.id === msg.id ? { ...m, thinkingCollapsed: !m.thinkingCollapsed } : m
+                        ));
+                      }
+                    }}
+                  >
+                    <Sparkles className={cn(
+                      "w-3.5 h-3.5",
+                      msg.isThinking
+                        ? "text-green-400 animate-spin"
+                        : "text-green-500/70 dark:text-green-400/70 animate-pulse"
+                    )} />
+                    <span className="font-medium text-gray-600 dark:text-gray-300">
+                      {msg.isThinking ? 'thinking...' : msg.thinkingEndTime && msg.thinkingStartTime ? `Thought completed (${((msg.thinkingEndTime - msg.thinkingStartTime) / 1000).toFixed(1)}s)` : 'thinking'}
+                    </span>
+                    {!msg.isThinking && (
+                      <ChevronDown className={cn(
+                        "w-3 h-3 ml-auto transition-transform duration-200",
+                        msg.thinkingCollapsed && "rotate-180"
+                      )} />
+                    )}
                   </div>
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.thinking}</ReactMarkdown>
+                  {(msg.isThinking || !msg.thinkingCollapsed) && (
+                    <div className="animate-fadeIn px-3 text-gray-500/70 dark:text-gray-400/60">
+                      {msg.thinking ? (
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.thinking}</ReactMarkdown>
+                      ) : (
+                        <div className="flex items-center gap-1 text-xs opacity-50 py-1">
+                          <span className="flex gap-0.5">
+                            <span className="w-1 h-1 bg-current rounded-full animate-bounce" style={{ animationDelay: '0s' }}></span>
+                            <span className="w-1 h-1 bg-current rounded-full animate-bounce" style={{ animationDelay: '0.15s' }}></span>
+                            <span className="w-1 h-1 bg-current rounded-full animate-bounce" style={{ animationDelay: '0.3s' }}></span>
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 
-              <div className={cn(
+              {(msg.content || msg.isLoading) && (
+                <div className={cn(
                 "p-4 rounded-2xl text-sm leading-relaxed shadow-sm transition-colors duration-300",
                 msg.role === 'user'
                   ? "bg-[#F4F4F4] dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-tr-none whitespace-pre-wrap"
@@ -319,10 +366,11 @@ export default function MarketingCopilot() {
                    msg.content
                  )}
               </div>
-              
-              {msg.role === 'assistant' && !msg.isLoading && (
+              )}
+
+              {msg.role === 'assistant' && !msg.isLoading && msg.content && (
                 <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button 
+                  <button
                     onClick={() => navigator.clipboard.writeText(msg.content)}
                     className="p-1.5 text-gray-400 dark:text-gray-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-md transition-colors text-xs flex items-center gap-1"
                     title="复制"
@@ -337,6 +385,9 @@ export default function MarketingCopilot() {
             </div>
           </div>
         ))}
+
+        {/* 滚动锚点 */}
+        <div ref={messagesEndRef} className="h-1" />
       </div>
 
       {/* Bottom Input Bar */}
@@ -344,28 +395,34 @@ export default function MarketingCopilot() {
         <div className="max-w-3xl mx-auto relative group pointer-events-auto">
            <div className="absolute -inset-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 rounded-full opacity-20 group-hover:opacity-30 blur-md transition-opacity duration-500" />
            
-           <div className="relative bg-white dark:bg-gray-800 backdrop-blur-md rounded-full border border-gray-200 dark:border-gray-700 shadow-xl flex items-center p-1.5 transition-colors">
-              <div className="pl-3 pr-2 text-indigo-600 dark:text-indigo-400">
-                <Sparkles className={cn("w-5 h-5", isGenerating && "animate-pulse")} />
-              </div>
+            <div className="relative bg-white/95 dark:bg-gray-800/95 backdrop-blur-md rounded-2xl border border-gray-200 dark:border-gray-700 shadow-xl flex items-end p-2 transition-all duration-300 hover:shadow-2xl">
+               <div className="pl-2 pb-2 text-indigo-600 dark:text-indigo-400">
+                 <Sparkles className={cn("w-5 h-5", isGenerating && "animate-pulse")} />
+               </div>
 
-              <input
-                type="text"
-                className="flex-1 bg-transparent border-none focus:ring-0 focus:outline-none text-gray-700 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 h-10"
-                placeholder="发送消息..."
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleGenerate()}
-              />
+               <textarea
+                 ref={textareaRef}
+                 className="flex-1 bg-transparent border-none focus:ring-0 focus:outline-none resize-none text-gray-700 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 min-h-[40px] max-h-[120px] py-2.5 px-2"
+                 placeholder="发送消息..."
+                 value={inputValue}
+                 onChange={(e) => setInputValue(e.target.value)}
+                 onKeyDown={(e) => {
+                   if (e.key === 'Enter' && !e.shiftKey) {
+                     e.preventDefault();
+                     handleGenerate();
+                   }
+                 }}
+                 rows={1}
+               />
 
-              <button 
-                onClick={() => handleGenerate()}
-                disabled={isGenerating || !inputValue.trim()}
-                className="p-2 bg-indigo-600 text-white rounded-full hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
-              >
-                 {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-              </button>
-           </div>
+               <button
+                 onClick={() => handleGenerate()}
+                 disabled={isGenerating || !inputValue.trim()}
+                 className="p-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white rounded-full transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 shadow-sm hover:shadow-md hover:scale-105"
+               >
+                  <Send className="w-4 h-4" />
+               </button>
+            </div>
            
            <p className="text-[10px] text-center text-gray-400 dark:text-gray-500 mt-2 opacity-70">
             AI 生成内容仅供参考
