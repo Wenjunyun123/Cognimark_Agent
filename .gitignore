@@ -33,6 +33,7 @@ Thumbs.db
 temp_repo/
 *.tmp
 *.bak
+*.png
 nul
 
 # 数据库文件
@@ -64,8 +65,8 @@ __tests__/
 *.xls
 *.csv
 
-# 配置文件
-config.py
+# 敏感配置文件（示例）
+config.py  
 
 
 

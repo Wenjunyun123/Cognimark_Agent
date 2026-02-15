@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { Send, Copy, ThumbsUp, Loader2, Sparkles, TrendingUp, Package, BarChart3, Upload, X, FileSpreadsheet, ArrowDown, ChevronDown, Globe } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { chatWithAgentStream, getProducts, uploadExcel, getUploadedFiles, deleteUploadedFile, UploadedFile } from '../services/api';
+import { chatWithAgentStream, getProducts, uploadExcel, getUploadedFiles, deleteUploadedFile, getChatHistory, UploadedFile } from '../services/api';
 import { SessionManager, ChatSession } from '../utils/sessionManager';
 import { cn } from '../utils/cn';
 
@@ -230,9 +230,24 @@ export default function Dashboard() {
       // 清除 URL 参数
       navigate('/', { replace: true });
     } else if (sessionId) {
-      // 加载指定会话
+      // 加载指定会话（从后端同步历史）
       const session = SessionManager.getSession(sessionId);
       if (session) {
+        // 从后端获取历史记录
+        try {
+          const backendHistory = await getChatHistory(sessionId);
+          if (backendHistory && backendHistory.length > 0) {
+            // 同步后端历史到前端
+            session.messages = backendHistory.map((msg: any) => ({
+              id: Math.random().toString(36).substr(2, 9),
+              role: msg.role,
+              content: msg.content
+            }));
+            SessionManager.saveSession(session);
+          }
+        } catch (error) {
+          console.error('Failed to sync history from backend:', error);
+        }
         setCurrentSession(session);
         setMessages(session.messages);
         SessionManager.setCurrentSession(session.id);

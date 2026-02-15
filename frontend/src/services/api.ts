@@ -135,8 +135,11 @@ export async function chatWithAgent(request: ChatRequest): Promise<ChatResponse>
 /**
  * 获取聊天历史
  */
-export async function getChatHistory(): Promise<ChatMessage[]> {
-  const response = await fetch(`${API_BASE_URL}/agent/history`);
+export async function getChatHistory(sessionId?: string): Promise<ChatMessage[]> {
+  const url = sessionId 
+    ? `${API_BASE_URL}/agent/history?session_id=${sessionId}`
+    : `${API_BASE_URL}/agent/history`;
+  const response = await fetch(url);
   if (!response.ok) {
     throw new Error('Failed to fetch chat history');
   }

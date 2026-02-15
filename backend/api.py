@@ -552,6 +552,18 @@ async def chat_with_agent_stream(req: ChatRequest):
             if in_thinking:
                 yield f"event: thinking_done\ndata: {{}}\n\n"
 
+            # 保存完整对话到历史
+            if session_id and not session_id.startswith('temp_'):
+                full_response = thinking_buffer + response_buffer
+                assistant_msg_entry = {
+                    "role": "assistant",
+                    "content": full_response,
+                    "timestamp": datetime.now().isoformat()
+                }
+                if current_history is not None:
+                    current_history.append(assistant_msg_entry)
+                    save_history()
+
             yield f"event: done\ndata: {{}}\n\n"
 
         except Exception as e:
