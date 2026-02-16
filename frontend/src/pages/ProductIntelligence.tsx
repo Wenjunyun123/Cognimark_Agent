@@ -50,7 +50,7 @@ export default function ProductIntelligence() {
               value={campaignText}
               onChange={(e) => setCampaignText(e.target.value)}
               rows={4}
-              className="w-full px-4 py-3 border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-colors duration-300 resize-none"
+              className="w-full px-4 py-3 border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-colors duration-300 resize-none"
               placeholder="描述您的营销活动目标、季节、偏好..."
             />
           </div>
@@ -63,7 +63,7 @@ export default function ProductIntelligence() {
               <select
                 value={targetMarket}
                 onChange={(e) => setTargetMarket(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors"
+                className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 transition-colors"
               >
                 <option value="">All Markets</option>
                 <option value="US">US</option>
@@ -91,7 +91,7 @@ export default function ProductIntelligence() {
               <button 
                 onClick={handleAnalyze}
                 disabled={isAnalyzing}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-70 disabled:cursor-not-allowed"
+                className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-70 disabled:cursor-not-allowed"
               >
                 {isAnalyzing ? (
                   <>

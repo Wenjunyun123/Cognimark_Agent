@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Send, Copy, ThumbsUp, Sparkles, ChevronDown } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -33,6 +33,10 @@ export default function MarketingCopilot() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const location = useLocation();
+  const navigate = useNavigate();
+
+  const isNewSession = new URLSearchParams(location.search).get('action') === 'new' || 
+                       new URLSearchParams(location.search).get('new') !== null;
 
   useEffect(() => {
     const hour = new Date().getHours();
@@ -58,20 +62,32 @@ export default function MarketingCopilot() {
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
-    if (params.get('new')) {
+    const sessionId = params.get('session');
+    const action = params.get('action');
+
+    if (action === 'new' || action === 'temp') {
+      SessionManager.clearMarketingCurrentSession();
       setMessages([]);
       setInputValue('');
       setCurrentSession(null);
+      if (action === 'new') {
+        navigate('/marketing', { replace: true });
+      }
+    } else if (sessionId) {
+      const session = SessionManager.getSession(sessionId);
+      if (session) {
+        setCurrentSession(session);
+        setMessages(session.messages as Message[]);
+        SessionManager.setMarketingCurrentSession(session.id);
+      }
+    } else {
+      const marketingSession = SessionManager.getMarketingCurrentSession();
+      if (marketingSession && marketingSession.messages.length > 0) {
+        setCurrentSession(marketingSession);
+        setMessages(marketingSession.messages as Message[]);
+      }
     }
-  }, [location.search]);
-
-  useEffect(() => {
-    const marketingSession = SessionManager.getAllSessions().find(s => s.id.startsWith('marketing_'));
-    if (marketingSession) {
-      setCurrentSession(marketingSession);
-      setMessages(marketingSession.messages as Message[]);
-    }
-  }, []);
+  }, [location.search, location.pathname, navigate]);
 
   useEffect(() => {
     if (messagesEndRef.current) {
@@ -106,6 +122,8 @@ export default function MarketingCopilot() {
     try {
       let thinkingText = '';
       let responseText = '';
+      let thinkingStartTime = 0;
+      let thinkingEndTime = 0;
 
       // 统一使用流式聊天API，确保与Dashboard一致的体验
       const promptMessage = customPrompt
@@ -132,19 +150,25 @@ export default function MarketingCopilot() {
         },
         // onThinkingStart
         () => {
+          thinkingStartTime = Date.now();
           setMessages(prev => prev.map(msg =>
-            msg.id === loadingId ? { ...msg, isThinking: true, isLoading: false, thinkingStartTime: Date.now() } : msg
+            msg.id === loadingId ? { ...msg, isThinking: true, isLoading: false, thinkingStartTime } : msg
           ));
         },
         // onThinkingEnd
         () => {
+          thinkingEndTime = Date.now();
           setMessages(prev => prev.map(msg =>
-            msg.id === loadingId ? { ...msg, isThinking: false, thinkingCollapsed: true, thinkingEndTime: Date.now() } : msg
+            msg.id === loadingId ? { ...msg, isThinking: false, thinkingCollapsed: true, thinkingEndTime } : msg
           ));
         },
         // onComplete
         () => {
           setIsGenerating(false);
+
+          if (!thinkingEndTime) {
+            thinkingEndTime = Date.now();
+          }
 
           const finalAssistantMessage: Message = {
             id: loadingId,
@@ -154,19 +178,15 @@ export default function MarketingCopilot() {
             isLoading: false,
             isThinking: false,
             thinkingCollapsed: true,
-            thinkingStartTime: messages.find(m => m.id === loadingId)?.thinkingStartTime,
-            thinkingEndTime: Date.now()
+            thinkingStartTime,
+            thinkingEndTime
           };
 
           const updatedMessages = [...messages.filter(m => m.id !== loadingId), userMessage, finalAssistantMessage];
 
-          let session = currentSession;
-          if (!session) {
-            session = SessionManager.createSession('营销文案对话', false);
-            session.id = 'marketing_' + session.id;
-            setCurrentSession(session);
-          }
-
+          const session = SessionManager.createSession('营销文案对话');
+          session.isMarketing = true;
+          
           session.messages = updatedMessages.map(m => ({
             id: m.id,
             role: m.role,
@@ -175,13 +195,22 @@ export default function MarketingCopilot() {
             thinkingStartTime: m.thinkingStartTime,
             thinkingEndTime: m.thinkingEndTime
           }));
+          session.productId = selectedProduct;
+          session.targetLanguage = targetLanguage;
+          session.channel = channel;
           session.updatedAt = Date.now();
+          SessionManager.updateSessionTitle(session);
           SessionManager.saveSession(session);
+          
+          setCurrentSession(session);
+          SessionManager.setMarketingCurrentSession(session.id);
           setMessages(updatedMessages);
+          
+          navigate(`/marketing?session=${session.id}`, { replace: true });
         },
         // onError
         (error) => {
-          console.error(error);
+          console.error('Stream error:', error);
           setMessages(prev => prev.map(msg =>
             msg.id === loadingId ? { ...msg, isLoading: false, isThinking: false, content: '连接后端失败，请确保 API 服务正在运行 (http://127.0.0.1:8000)' } : msg
           ));
@@ -190,7 +219,7 @@ export default function MarketingCopilot() {
       );
 
     } catch (error) {
-      console.error(error);
+      console.error('Generate error:', error);
       setMessages(prev => prev.map(msg =>
         msg.id === loadingId ? { ...msg, isLoading: false, isThinking: false, content: '连接后端失败，请确保 API 服务正在运行 (http://127.0.0.1:8000)' } : msg
       ));
@@ -198,8 +227,22 @@ export default function MarketingCopilot() {
     }
   };
 
+  const handleGenerateWithTimeout = async () => {
+    setTimeout(() => {
+      if (isGenerating) {
+        console.log('Request timeout, forcing reset...');
+        setMessages(prev => prev.map(msg =>
+          msg.isLoading ? { ...msg, isLoading: false, isThinking: false, content: '请求超时，请重试' } : msg
+        ));
+        setIsGenerating(false);
+      }
+    }, 30000);
+    
+    await handleGenerate();
+  };
+
   // Welcome UI - 保留原来的营销文案配置界面
-  if (messages.length === 0) {
+  if (isNewSession || messages.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-full bg-white dark:bg-gray-900 p-4 animate-fadeIn transition-colors duration-300">
         <div className="max-w-3xl w-full flex flex-col items-center space-y-6 relative -mt-32">
@@ -217,7 +260,7 @@ export default function MarketingCopilot() {
               <select
                 value={selectedProduct}
                 onChange={(e) => setSelectedProduct(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
               >
                 {products.map((p) => (
                   <option key={p.product_id} value={p.product_id}>
@@ -235,7 +278,7 @@ export default function MarketingCopilot() {
                 <select
                   value={targetLanguage}
                   onChange={(e) => setTargetLanguage(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
                 >
                   <option>English</option>
                   <option>Chinese</option>
@@ -253,7 +296,7 @@ export default function MarketingCopilot() {
                 <select
                   value={channel}
                   onChange={(e) => setChannel(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
                 >
                   <option>Amazon Listing</option>
                   <option>Facebook Ads</option>
@@ -266,7 +309,7 @@ export default function MarketingCopilot() {
             <button
               onClick={() => handleGenerate()}
               disabled={!selectedProduct}
-              className="w-full py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 font-medium"
+              className="w-full py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 font-medium"
             >
               <Sparkles className="w-5 h-5" />
               生成营销文案
@@ -295,7 +338,7 @@ export default function MarketingCopilot() {
               <div className="flex items-center justify-center flex-shrink-0 w-12 h-12 rounded-full bg-indigo-100 dark:bg-indigo-900">
                 <Sparkles className={cn(
                   "w-6 h-6",
-                  msg.isThinking ? "text-indigo-700 dark:text-indigo-500 animate-pulse" : "text-indigo-600 dark:text-indigo-400"
+                  msg.isThinking ? "text-indigo-700 dark:text-indigo-500 animate-pulse" : "text-green-600 dark:text-green-400"
                 )} />
               </div>
             )}
@@ -356,9 +399,9 @@ export default function MarketingCopilot() {
               )}>
                  {msg.isLoading ? (
                    <div className="flex gap-1 h-6 items-center">
-                     <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '0s' }}></span>
-                     <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></span>
-                     <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></span>
+                     <span className="w-2 h-2 bg-green-400 rounded-full animate-bounce" style={{ animationDelay: '0s' }}></span>
+                     <span className="w-2 h-2 bg-green-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></span>
+                     <span className="w-2 h-2 bg-green-400 rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></span>
                    </div>
                  ) : msg.role === 'assistant' ? (
                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
@@ -372,7 +415,7 @@ export default function MarketingCopilot() {
                 <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button
                     onClick={() => navigator.clipboard.writeText(msg.content)}
-                    className="p-1.5 text-gray-400 dark:text-gray-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-md transition-colors text-xs flex items-center gap-1"
+                    className="p-1.5 text-gray-400 dark:text-gray-500 hover:text-green-600 dark:hover:text-green-400 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-md transition-colors text-xs flex items-center gap-1"
                     title="复制"
                   >
                     <Copy className="w-4 h-4" />
@@ -396,7 +439,7 @@ export default function MarketingCopilot() {
            <div className="absolute -inset-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 rounded-full opacity-20 group-hover:opacity-30 blur-md transition-opacity duration-500" />
            
             <div className="relative bg-white/95 dark:bg-gray-800/95 backdrop-blur-md rounded-2xl border border-gray-200 dark:border-gray-700 shadow-xl flex items-end p-2 transition-all duration-300 hover:shadow-2xl">
-               <div className="pl-2 pb-2 text-indigo-600 dark:text-indigo-400">
+               <div className="pl-2 pb-2 text-green-600 dark:text-green-400">
                  <Sparkles className={cn("w-5 h-5", isGenerating && "animate-pulse")} />
                </div>
 
@@ -418,7 +461,7 @@ export default function MarketingCopilot() {
                <button
                  onClick={() => handleGenerate()}
                  disabled={isGenerating || !inputValue.trim()}
-                 className="p-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white rounded-full transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 shadow-sm hover:shadow-md hover:scale-105"
+                 className="p-2.5 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white rounded-full transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 shadow-sm hover:shadow-md hover:scale-105"
                >
                   <Send className="w-4 h-4" />
                </button>

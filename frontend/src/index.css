@@ -51,6 +51,21 @@
   .animate-fluorescent {
     animation: fluorescent-pulse 3s infinite ease-in-out;
   }
+
+  /* Custom Scrollbar */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    @apply bg-gray-300 dark:bg-gray-700 rounded-full;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    @apply bg-gray-400 dark:bg-gray-600;
+  }
 }
 
 /* Manually adding dark mode classes to ensure they work even if Tailwind config HMR fails */

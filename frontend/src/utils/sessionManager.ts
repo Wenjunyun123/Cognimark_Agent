@@ -12,10 +12,15 @@ export interface ChatSession {
   createdAt: number;
   updatedAt: number;
   isTemporary?: boolean;
+  isMarketing?: boolean;
+  productId?: string;
+  targetLanguage?: string;
+  channel?: string;
 }
 
 const STORAGE_KEY = 'cognimark_sessions';
 const CURRENT_SESSION_KEY = 'cognimark_current_session';
+const MARKETING_CURRENT_SESSION_KEY = 'cognimark_current_marketing_session';
 
 export class SessionManager {
   // 获取所有会话（按时间倒序）
@@ -24,13 +29,22 @@ export class SessionManager {
     if (!data) return [];
     try {
       const sessions = JSON.parse(data);
-      // 过滤掉临时会话，并按更新时间倒序排列
       return sessions
         .filter((s: ChatSession) => !s.isTemporary)
         .sort((a: ChatSession, b: ChatSession) => b.updatedAt - a.updatedAt);
     } catch {
       return [];
     }
+  }
+
+  // 获取普通会话（非营销）
+  static getNormalSessions(): ChatSession[] {
+    return this.getAllSessions().filter(s => !s.isMarketing);
+  }
+
+  // 获取营销会话
+  static getMarketingSessions(): ChatSession[] {
+    return this.getAllSessions().filter(s => s.isMarketing);
   }
 
   // 获取单个会话
@@ -87,10 +101,20 @@ export class SessionManager {
   static updateSessionTitle(session: ChatSession, newTitle?: string): ChatSession {
     if (newTitle) {
       session.title = newTitle;
+    } else if (session.isMarketing && session.productId) {
+      const langMap: Record<string, string> = {
+        'Chinese': 'CN', 'English': 'EN', 'Spanish': 'ES',
+        'French': 'FR', 'German': 'DE', 'Japanese': 'JP'
+      };
+      const channelMap: Record<string, string> = {
+        'Facebook Ads': 'FB', 'TikTok Ads': 'TK', 'Amazon Listing': 'AMZ', 'Email Campaign': 'EM'
+      };
+      const lang = langMap[session.targetLanguage || ''] || session.targetLanguage?.slice(0, 2).toUpperCase() || '';
+      const channel = channelMap[session.channel || ''] || session.channel?.slice(0, 2).toUpperCase() || '';
+      session.title = `${session.productId}-${lang}-${channel}`;
     } else if (session.messages.length > 0 && (session.title === '新对话' || session.title.startsWith('New Chat'))) {
       const firstUserMsg = session.messages.find(m => m.role === 'user');
       if (firstUserMsg) {
-        // 截取前 20 个字符作为标题
         session.title = firstUserMsg.content.slice(0, 20).trim() || '新对话';
       }
     }
@@ -114,6 +138,25 @@ export class SessionManager {
   // 清除当前会话
   static clearCurrentSession(): void {
     localStorage.removeItem(CURRENT_SESSION_KEY);
+  }
+
+  // 获取营销当前会话
+  static getMarketingCurrentSession(): ChatSession | null {
+    const currentId = localStorage.getItem(MARKETING_CURRENT_SESSION_KEY);
+    if (currentId) {
+      return this.getSession(currentId);
+    }
+    return null;
+  }
+
+  // 设置营销当前会话
+  static setMarketingCurrentSession(id: string): void {
+    localStorage.setItem(MARKETING_CURRENT_SESSION_KEY, id);
+  }
+
+  // 清除营销当前会话
+  static clearMarketingCurrentSession(): void {
+    localStorage.removeItem(MARKETING_CURRENT_SESSION_KEY);
   }
 }
 

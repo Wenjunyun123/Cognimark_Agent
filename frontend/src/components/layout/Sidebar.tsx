@@ -13,10 +13,14 @@ import {
   MessageSquarePlus,
   MessageSquare,
   Trash2,
-  X
+  X,
+  LogIn
 } from 'lucide-react';
 import { SessionManager, ChatSession } from '../../utils/sessionManager';
 import { cn } from '../../utils/cn';
+import SettingsModal from '../settings/SettingsModal';
+import LoginModal from '../auth/LoginModal';
+import { useAuth } from '../../contexts/AuthContext';
 
 // OPTIMIZATION: 提升静态数据到组件外部，避免每次渲染时重新创建 (rendering-hoist-jsx)
 const NAV_ITEMS = [
@@ -28,6 +32,9 @@ const NAV_ITEMS = [
 export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isLoginOpen, setIsLoginOpen] = useState(false);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<string>('general');
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
@@ -35,6 +42,7 @@ export default function Sidebar() {
   const userMenuRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
   const location = useLocation();
+  const { user, isAuthenticated } = useAuth();
 
   useEffect(() => {
     loadSessions();
@@ -47,9 +55,14 @@ export default function Sidebar() {
     return () => window.removeEventListener('storage', handleStorageChange);
   }, [location]);
 
+  const [normalSessions, setNormalSessions] = useState<ChatSession[]>([]);
+  const [marketingSessions, setMarketingSessions] = useState<ChatSession[]>([]);
+
   const loadSessions = () => {
-    const allSessions = SessionManager.getAllSessions();
-    setSessions(allSessions.slice(0, 10)); // 只显示最近 10 个
+    const all = SessionManager.getAllSessions().slice(0, 20);
+    setSessions(all);
+    setNormalSessions(SessionManager.getNormalSessions().slice(0, 10));
+    setMarketingSessions(SessionManager.getMarketingSessions().slice(0, 10));
   };
 
   const deleteSession = (e: React.MouseEvent, sessionId: string) => {
@@ -111,13 +124,19 @@ export default function Sidebar() {
           {collapsed ? <PanelLeftOpen className="w-5 h-5" /> : <PanelLeftClose className="w-5 h-5" />}
         </button>
 
-        <button
-           onClick={() => navigate('/?action=new')}
+          <button
+             onClick={() => {
+               if (location.pathname === '/marketing') {
+                 window.location.href = '/marketing?action=new';
+               } else {
+                 navigate('/?action=new');
+               }
+             }}
              className="text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors p-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800"
-           title="新建会话"
-        >
-           <MessageSquarePlus className="w-5 h-5" />
-        </button>
+             title="新建会话"
+          >
+             <MessageSquarePlus className="w-5 h-5" />
+          </button>
 
         {!collapsed && (
          <button
@@ -179,7 +198,7 @@ export default function Sidebar() {
                 className={({ isActive }) => cn(
                   "flex items-center gap-3 px-3 py-2 rounded-lg transition-colors duration-200 group min-h-[44px]",
                   isActive && !location.search
-                    ? "bg-white dark:bg-gray-800 shadow-sm text-indigo-600 dark:text-indigo-400 font-medium"
+                    ? "bg-white dark:bg-gray-800 shadow-sm text-green-600 dark:text-green-400 font-medium"
                     : "text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white"
                 )}
               >
@@ -216,13 +235,13 @@ export default function Sidebar() {
                       className={cn(
                         "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group w-full text-left relative",
                         location.search.includes(session.id)
-                          ? "bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 font-medium"
+                          ? "bg-green-50 dark:bg-green-900/30 text-green-600 dark:text-green-400 font-medium"
                           : "text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white"
                       )}
                     >
                       <MessageSquare className={cn(
                         "w-4 h-4 flex-shrink-0",
-                        location.search.includes(session.id) ? "text-indigo-500" : "text-gray-400"
+                        location.search.includes(session.id) ? "text-green-500" : "text-gray-400"
                       )} />
                       <div className="flex-1 min-w-0">
                         <p className="truncate text-sm">{session.title}</p>
@@ -255,102 +274,187 @@ export default function Sidebar() {
             </div>
           )
         ) : (
-          sessions.length > 0 && (
-            <div className="pt-2 border-t border-gray-200 dark:border-gray-800">
-              <div className="flex items-center justify-between px-3 py-2 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                <span>近期对话</span>
-                <span className="bg-gray-200 dark:bg-gray-700 px-1.5 py-0.5 rounded-full text-[10px]">{sessions.length}</span>
-              </div>
+          <div className="space-y-4">
+            {normalSessions.length > 0 && (
+              <div className="pt-2 border-t border-gray-200 dark:border-gray-800">
+                <div className="flex items-center justify-between px-3 py-2 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                  <span>近期对话</span>
+                  <span className="bg-gray-200 dark:bg-gray-700 px-1.5 py-0.5 rounded-full text-[10px]">{normalSessions.length}</span>
+                </div>
 
-              <div className="space-y-0.5 mt-1">
-                {sessions.map((session) => (
-                  <button
-                    key={session.id}
-                    onClick={() => navigate(`/?session=${session.id}`)}
-                    className={cn(
-                      "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group w-full text-left relative",
-                      location.search.includes(session.id)
-                        ? "bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 font-medium"
-                        : "text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white"
-                    )}
-                  >
-                    <MessageSquare className={cn(
-                      "w-4 h-4 flex-shrink-0",
-                      location.search.includes(session.id) ? "text-indigo-500" : "text-gray-400"
-                    )} />
-                    <div className="flex-1 min-w-0">
-                      <p className="truncate text-sm">{session.title}</p>
-                      <p className="text-[10px] text-gray-400 truncate opacity-0 group-hover:opacity-100 transition-opacity">
-                        {new Date(session.updatedAt).toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                      </p>
-                    </div>
-
-                    <div className="absolute right-2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center bg-gray-100 dark:bg-gray-800 rounded-md shadow-sm">
-                      <div
-                        onClick={(e) => deleteSession(e, session.id)}
-                        className="p-1.5 hover:bg-red-100 dark:hover:bg-red-900/30 text-gray-400 hover:text-red-500 rounded cursor-pointer"
-                        title="删除会话"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
+                <div className="space-y-0.5">
+                  {normalSessions.map((session) => (
+                    <button
+                      key={session.id}
+                      onClick={() => navigate(`/?session=${session.id}`)}
+                      className={cn(
+                        "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group w-full text-left relative",
+                        location.search.includes(session.id)
+                          ? "bg-green-50 dark:bg-green-900/30 text-green-600 dark:text-green-400 font-medium"
+                          : "text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white"
+                      )}
+                    >
+                      <MessageSquare className={cn(
+                        "w-4 h-4 flex-shrink-0",
+                        location.search.includes(session.id) ? "text-green-500" : "text-gray-400"
+                      )} />
+                      <div className="flex-1 min-w-0">
+                        <p className="truncate text-sm">{session.title}</p>
+                        <p className="text-[10px] text-gray-400 truncate opacity-0 group-hover:opacity-100 transition-opacity">
+                          {new Date(session.updatedAt).toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        </p>
                       </div>
-                    </div>
-                  </button>
-                ))}
+
+                      <div className="absolute right-2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center bg-gray-100 dark:bg-gray-800 rounded-md shadow-sm">
+                        <div
+                          onClick={(e) => deleteSession(e, session.id)}
+                          className="p-1.5 hover:bg-red-100 dark:hover:bg-red-900/30 text-gray-400 hover:text-red-500 rounded cursor-pointer"
+                          title="删除会话"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
-          )
+            )}
+
+            {marketingSessions.length > 0 && (
+              <div className="pt-2 border-t border-gray-200 dark:border-gray-800">
+                <div className="flex items-center justify-between px-3 py-2 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                  <span>智能营销</span>
+                  <span className="bg-gray-200 dark:bg-gray-700 px-1.5 py-0.5 rounded-full text-[10px]">{marketingSessions.length}</span>
+                </div>
+
+                <div className="space-y-0.5">
+                  {marketingSessions.map((session) => (
+                    <button
+                      key={session.id}
+                      onClick={() => navigate(`/marketing?session=${session.id}`)}
+                      className={cn(
+                        "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group w-full text-left relative",
+                        location.search.includes(session.id)
+                          ? "bg-green-50 dark:bg-green-900/30 text-green-600 dark:text-green-400 font-medium"
+                          : "text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white"
+                      )}
+                    >
+                      <MessageSquare className={cn(
+                        "w-4 h-4 flex-shrink-0",
+                        location.search.includes(session.id) ? "text-green-500" : "text-gray-400"
+                      )} />
+                      <div className="flex-1 min-w-0">
+                        <p className="truncate text-sm">{session.title}</p>
+                        <p className="text-[10px] text-gray-400 truncate opacity-0 group-hover:opacity-100 transition-opacity">
+                          {new Date(session.updatedAt).toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        </p>
+                      </div>
+
+                      <div className="absolute right-2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center bg-gray-100 dark:bg-gray-800 rounded-md shadow-sm">
+                        <div
+                          onClick={(e) => deleteSession(e, session.id)}
+                          className="p-1.5 hover:bg-red-100 dark:hover:bg-red-900/30 text-gray-400 hover:text-red-500 rounded cursor-pointer"
+                          title="删除会话"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         )}
       </nav>
 
       {/* Bottom User Profile & Menu */}
       <div className={cn("p-4 border-t border-gray-100 dark:border-gray-800 mt-auto relative transition-colors duration-300", collapsed ? "hidden" : "")} ref={userMenuRef}>
         
-        {/* User Menu Popup */}
-        {showUserMenu && (
-          <div className="absolute bottom-full left-4 mb-2 w-56 bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden z-30 animate-fadeIn origin-bottom-left">
-            <div className="p-1">
-              <button className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg flex items-center gap-3 transition-colors duration-200">
-                <User className="w-4 h-4 text-gray-500 dark:text-gray-400" />
-                我的账号
-              </button>
-              <NavLink 
-                to="/settings" 
-                className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg flex items-center gap-3 transition-colors duration-200"
-                onClick={() => setShowUserMenu(false)}
-              >
-                <Settings className="w-4 h-4 text-gray-500 dark:text-gray-400" />
-                设置
-              </NavLink>
-              <button className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg flex items-center gap-3 transition-colors duration-200">
-                <Users className="w-4 h-4 text-gray-500 dark:text-gray-400" />
-                创建团队
-              </button>
-            </div>
-            <div className="border-t border-gray-100 dark:border-gray-700 p-1">
-               <div className="px-4 py-2 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg cursor-pointer transition-colors duration-200">
-                  <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold text-[10px]">W</div>
-                    <span className="text-sm text-gray-700 dark:text-gray-200">wenjun you</span>
+        {isAuthenticated ? (
+          <>
+            {/* User Menu Popup */}
+            {showUserMenu && (
+              <div className="absolute bottom-full left-4 mb-2 w-56 bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden z-30 animate-fadeIn origin-bottom-left">
+                <div className="p-1">
+                  <button 
+                    onClick={() => {
+                      setSettingsInitialTab('account');
+                      setIsSettingsOpen(true);
+                      setShowUserMenu(false);
+                    }}
+                    className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg flex items-center gap-3 transition-colors duration-200"
+                  >
+                    <User className="w-4 h-4 text-gray-500 dark:text-gray-400" />
+                    我的账号
+                  </button>
+                  <button
+                    onClick={() => {
+                      setSettingsInitialTab('general');
+                      setIsSettingsOpen(true);
+                      setShowUserMenu(false);
+                    }}
+                    className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg flex items-center gap-3 transition-colors duration-200"
+                  >
+                    <Settings className="w-4 h-4 text-gray-500 dark:text-gray-400" />
+                    设置
+                  </button>
+                  <button className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg flex items-center gap-3 transition-colors duration-200">
+                    <Users className="w-4 h-4 text-gray-500 dark:text-gray-400" />
+                    创建团队
+                  </button>
+                </div>
+                <div className="border-t border-gray-100 dark:border-gray-700 p-1">
+                  <div className="px-4 py-2 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg cursor-pointer transition-colors duration-200">
+                      <div className="flex items-center gap-2">
+                        <div className="w-6 h-6 rounded-full bg-green-600 text-white flex items-center justify-center font-bold text-[10px]">
+                          {user?.avatar || 'U'}
+                        </div>
+                        <span className="text-sm text-gray-700 dark:text-gray-200">{user?.name || 'User'}</span>
+                      </div>
+                      <div className="w-2 h-2 bg-green-500 rounded-full"></div>
                   </div>
-                  <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-             </div>
-           </div>
-          </div>
-        )}
+              </div>
+              </div>
+            )}
 
-        {/* User Button */}
-        <button 
-          onClick={() => setShowUserMenu(!showUserMenu)}
-          className="flex items-center gap-3 w-full hover:bg-gray-200 dark:hover:bg-gray-800 p-2 rounded-lg transition-colors duration-200"
-        >
-          <div className="w-8 h-8 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold text-xs flex-shrink-0">
-            W
-          </div>
-            <div className="flex-1 overflow-hidden text-left">
-            <p className="text-sm font-medium text-gray-900 dark:text-white truncate">wenjun you</p>
+            {/* User Button */}
+            <button 
+              onClick={() => setShowUserMenu(!showUserMenu)}
+              className="flex items-center gap-3 w-full hover:bg-gray-200 dark:hover:bg-gray-800 p-2 rounded-lg transition-colors duration-200"
+            >
+              <div className="w-8 h-8 rounded-full bg-green-600 text-white flex items-center justify-center font-bold text-xs flex-shrink-0">
+                {user?.avatar || 'U'}
+              </div>
+                <div className="flex-1 overflow-hidden text-left">
+                <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{user?.name || 'User'}</p>
+                </div>
+            </button>
+          </>
+        ) : (
+          <button 
+            onClick={() => setIsLoginOpen(true)}
+            className="flex items-center gap-3 w-full hover:bg-gray-200 dark:hover:bg-gray-800 p-2 rounded-lg transition-colors duration-200 text-gray-700 dark:text-gray-300"
+          >
+            <div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 flex items-center justify-center flex-shrink-0">
+              <LogIn className="w-4 h-4" />
             </div>
-        </button>
+            <div className="flex-1 overflow-hidden text-left">
+              <p className="text-sm font-medium">登录账号</p>
+            </div>
+          </button>
+        )}
       </div>
+      
+      <SettingsModal 
+        isOpen={isSettingsOpen} 
+        onClose={() => setIsSettingsOpen(false)}
+        initialTab={settingsInitialTab}
+      />
+      <LoginModal 
+        isOpen={isLoginOpen}
+        onClose={() => setIsLoginOpen(false)}
+      />
     </aside>
   );
 }

@@ -51,7 +51,7 @@ export default function Dashboard() {
     { id: 'selection', label: '选品策略建议', icon: Package, desc: '基于数据提供选品推荐', color: 'text-green-500' },
     { id: 'ads', label: '广告优化建议', icon: BarChart3, desc: '优化广告投放策略', color: 'text-purple-500' },
     { id: 'conversion', label: '转化率优化', icon: Sparkles, desc: '提升转化率和用户体验', color: 'text-orange-500' },
-    { id: 'upload', label: '上传数据文件', icon: FileSpreadsheet, desc: '上传 Excel/CSV 进行分析', color: 'text-indigo-500' },
+    { id: 'upload', label: '上传数据文件', icon: FileSpreadsheet, desc: '上传 Excel/CSV 进行分析', color: 'text-green-500' },
   ];
 
   useEffect(() => {
@@ -592,7 +592,7 @@ export default function Dashboard() {
                         className={cn(
                           "w-full flex items-center gap-3 px-4 py-3 text-left transition-colors",
                           index === slashCommandIndex 
-                            ? "bg-indigo-50 dark:bg-indigo-900/20" 
+                            ? "bg-green-50 dark:bg-green-900/20" 
                             : "hover:bg-gray-50 dark:hover:bg-gray-700"
                         )}
                       >
@@ -691,7 +691,7 @@ export default function Dashboard() {
                          }}
                          className={cn(
                            "w-full flex items-center gap-2 px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-700 text-sm transition-colors text-left",
-                           selectedMode === 'normal' ? "bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400" : "text-gray-700 dark:text-gray-200"
+                           selectedMode === 'normal' ? "bg-green-50 dark:bg-green-900/20 text-indigo-600 dark:text-indigo-400" : "text-gray-700 dark:text-gray-200"
                          )}
                        >
                          <Sparkles className="w-4 h-4" />
@@ -704,7 +704,7 @@ export default function Dashboard() {
                          }}
                          className={cn(
                            "w-full flex items-center gap-2 px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-700 text-sm transition-colors text-left",
-                           selectedMode === 'market' ? "bg-indigo-50 dark:bg-indigo-900/20 text-blue-600 dark:text-blue-400" : "text-gray-700 dark:text-gray-200"
+                           selectedMode === 'market' ? "bg-green-50 dark:bg-green-900/20 text-blue-600 dark:text-blue-400" : "text-gray-700 dark:text-gray-200"
                          )}
                        >
                          <TrendingUp className="w-4 h-4 text-blue-500" />
@@ -717,7 +717,7 @@ export default function Dashboard() {
                          }}
                          className={cn(
                            "w-full flex items-center gap-2 px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-700 text-sm transition-colors text-left",
-                           selectedMode === 'selection' ? "bg-indigo-50 dark:bg-indigo-900/20 text-green-600 dark:text-green-400" : "text-gray-700 dark:text-gray-200"
+                           selectedMode === 'selection' ? "bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400" : "text-gray-700 dark:text-gray-200"
                          )}
                        >
                          <Package className="w-4 h-4 text-green-500" />
@@ -730,7 +730,7 @@ export default function Dashboard() {
                          }}
                          className={cn(
                            "w-full flex items-center gap-2 px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-700 text-sm transition-colors text-left",
-                           selectedMode === 'ads' ? "bg-indigo-50 dark:bg-indigo-900/20 text-purple-600 dark:text-purple-400" : "text-gray-700 dark:text-gray-200"
+                           selectedMode === 'ads' ? "bg-green-50 dark:bg-green-900/20 text-purple-600 dark:text-purple-400" : "text-gray-700 dark:text-gray-200"
                          )}
                        >
                          <BarChart3 className="w-4 h-4 text-purple-500" />
@@ -743,7 +743,7 @@ export default function Dashboard() {
                          }}
                          className={cn(
                            "w-full flex items-center gap-2 px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-700 text-sm transition-colors text-left",
-                           selectedMode === 'conversion' ? "bg-indigo-50 dark:bg-indigo-900/20 text-orange-600 dark:text-orange-400" : "text-gray-700 dark:text-gray-200"
+                           selectedMode === 'conversion' ? "bg-green-50 dark:bg-green-900/20 text-orange-600 dark:text-orange-400" : "text-gray-700 dark:text-gray-200"
                          )}
                        >
                          <Sparkles className="w-4 h-4 text-orange-500" />
@@ -1044,7 +1044,7 @@ export default function Dashboard() {
                         className={cn(
                           "w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors",
                           index === slashCommandIndex 
-                            ? "bg-indigo-50 dark:bg-indigo-900/20" 
+                            ? "bg-green-50 dark:bg-green-900/20" 
                             : "hover:bg-gray-50 dark:hover:bg-gray-700"
                         )}
                       >
@@ -1065,7 +1065,7 @@ export default function Dashboard() {
             )}
 
            <div className="relative bg-white/95 dark:bg-gray-800/95 backdrop-blur-md rounded-2xl border border-gray-200 dark:border-gray-700 shadow-xl flex items-end p-2 transition-all duration-300 hover:shadow-2xl">
-              <div className="pl-2 pb-2 text-indigo-600 dark:text-indigo-400">
+              <div className="pl-2 pb-2 text-green-600 dark:text-green-400">
                 <Sparkles className={cn("w-5 h-5", isGenerating && "animate-pulse")} />
               </div>
 
@@ -1091,7 +1091,7 @@ export default function Dashboard() {
                 <button
                   onClick={() => handleGenerate()}
                   disabled={!inputValue.trim()}
-                  className="p-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white rounded-full transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 shadow-sm hover:shadow-md hover:scale-105"
+                  className="p-2.5 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white rounded-full transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 shadow-sm hover:shadow-md hover:scale-105"
                 >
                   <Send className="w-4 h-4" />
                 </button>
