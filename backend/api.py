@@ -352,6 +352,9 @@ async def chat_with_agent_stream(req: ChatRequest):
         try:
             import asyncio
 
+            # 【方案 A：流式骨架预响应】立即发送状态通知，减少用户感知等待时间
+            yield f"event: status\ndata: {{\"message\": \"正在分析您的需求...\"}}\n\n"
+
             # 1. 确定会话上下文
             session_id = req.session_id
             current_history = []
@@ -416,6 +419,9 @@ async def chat_with_agent_stream(req: ChatRequest):
                 # 获取商品检索实例
                 product_rag = get_product_rag()
 
+                # 发送检索状态通知
+                yield f"event: status\ndata: {{\"message\": \"正在检索商品数据库...\"}}\n\n"
+
                 # 执行检索
                 search_result = product_rag.search(
                     query=user_message,
@@ -424,7 +430,10 @@ async def chat_with_agent_stream(req: ChatRequest):
 
                 # 格式化结果
                 if search_result["total"] > 0:
-                    database_context = product_rag.format_for_llm(search_result)
+                    database_context = product_rag.format_for_llm(search_result, compact=True)
+
+                    # 发送检索完成通知，显示找到多少结果
+                    yield f"event: status\ndata: {{\"message\": \"已找到 {search_result['total']} 条相关商品，正在生成回答...\"}}\n\n"
 
             except Exception as e:
                 # 如果查询失败，不影响正常对话

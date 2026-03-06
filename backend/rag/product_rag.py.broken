@@ -371,20 +371,23 @@ class ProductRAG:
             compact: 是否使用紧凑模式（减少上下文长度，提高 TTFT）
         """
         if result["total"] == 0:
-            return f"\n\n【未找到与 \"{result['query']}\" 相关的结果】"
+            return f"
+
+【未找到与 \"{result['query']}\" 相关的结果】"
 
         source_name = result.get("source", "")
         config = get_config(source_name)
         source_label = "数据" if not config else config.get("keywords", ["数据"])[0]
 
-        # 紧凑模式：只保留关键信息，减少上下文长度约 40-60%
         if compact:
-            lines = [
-                f"\n\n【找到 {result['total']} 个与 \"{result['query']}\" 相关的{source_label}】\n"
+            lines_list = [
+                f"
+
+【找到 {result['total']} 个与 \"{result['query']}\" 相关的{source_label}】
+"
             ]
             for i, item in enumerate(result["results"], 1):
                 metadata = item.get("metadata", {})
-                # 构建紧凑格式：标题 | 价格 | 评分 | 销量 | 市场
                 parts = [item['title']]
                 if "price" in metadata:
                     parts.append(f"${metadata['price']}")
@@ -394,28 +397,33 @@ class ProductRAG:
                     parts.append(f"S:{metadata['sales']}")
                 if "market" in metadata:
                     parts.append(f"M:{metadata['market']}")
-                lines.append(f"{i}. {' | '.join(parts)}")
+                lines_list.append(f"{i}. {' | '.join(parts)}")
         else:
-            # 完整模式：显示所有信息
-            lines = [
-                f"\n\n【找到 {result['total']} 个与 \"{result['query']}\" 相关的{source_label}】\n"
+            lines_list = [
+                f"
+
+【找到 {result['total']} 个与 \"{result['query']}\" 相关的{source_label}】
+"
             ]
             for i, item in enumerate(result["results"], 1):
-                lines.append(f"{i}. {item['title']}")
+                lines_list.append(f"{i}. {item['title']}")
                 metadata = item.get("metadata", {})
                 if metadata:
                     if "price" in metadata:
-                        lines.append(f"   ${metadata['price']}")
+                        lines_list.append(f"   ${metadata['price']}")
                     if "rating" in metadata:
-                        lines.append(f"   {metadata['rating']}/5")
+                        lines_list.append(f"   {metadata['rating']}/5")
                     if "sales" in metadata:
-                        lines.append(f"   {metadata['sales']}/月")
+                        lines_list.append(f"   {metadata['sales']}/月")
                     if "market" in metadata:
-                        lines.append(f"   {metadata['market']}")
+                        lines_list.append(f"   {metadata['market']}")
                     if "tags" in metadata:
-                        lines.append(f"   {metadata['tags']}")
+                        lines_list.append(f"   {metadata['tags']}")
                     if item.get('url'):
-                        lines.append(f"   {item['url']}")
+                        lines_list.append(f"   {item['url']}")
+
+        return "
+".join(lines_list)
 
 
     def rebuild_all_indexes(self):
