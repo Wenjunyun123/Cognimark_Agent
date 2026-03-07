@@ -240,12 +240,17 @@ export default function Dashboard() {
           const backendHistory = await getChatHistory(sessionId);
           if (backendHistory && backendHistory.length > 0) {
             const existingMessages = session.messages || [];
-            session.messages = backendHistory.map((msg: any, index: number) => ({
-              id: Math.random().toString(36).substr(2, 9),
-              role: msg.role,
-              content: msg.content,
-              thinking: msg.thinking || existingMessages[index]?.thinking
-            }));
+            session.messages = backendHistory.map((msg: any, index: number) => {
+              const existingMsg = existingMessages[index] || {};
+              return {
+                id: Math.random().toString(36).substr(2, 9),
+                role: msg.role,
+                content: msg.content,
+                thinking: msg.thinking || existingMsg.thinking,
+                thinkingStartTime: existingMsg.thinkingStartTime,
+                thinkingEndTime: existingMsg.thinkingEndTime
+              };
+            });
             SessionManager.saveSession(session);
           }
         } catch (error) {
@@ -417,6 +422,8 @@ export default function Dashboard() {
 
       let thinkingText = '';
       let responseText = '';
+      let thinkingStartTime = 0;
+      let thinkingEndTime = 0;
 
       const abortStream = await chatWithAgentStream(
         {
@@ -441,14 +448,16 @@ export default function Dashboard() {
         },
         // onThinkingStart
         () => {
+          thinkingStartTime = Date.now();
           setMessages(prev => prev.map(msg =>
-            msg.id === loadingId ? { ...msg, isThinking: true, isLoading: false, thinkingStartTime: Date.now() } : msg
+            msg.id === loadingId ? { ...msg, isThinking: true, isLoading: false, thinkingStartTime } : msg
           ));
         },
         // onThinkingEnd
         () => {
+          thinkingEndTime = Date.now();
           setMessages(prev => prev.map(msg =>
-            msg.id === loadingId ? { ...msg, isThinking: false, thinkingCollapsed: true, thinkingEndTime: Date.now() } : msg
+            msg.id === loadingId ? { ...msg, isThinking: false, thinkingCollapsed: true, thinkingEndTime } : msg
           ));
         },
         // onComplete
@@ -461,7 +470,12 @@ export default function Dashboard() {
             id: loadingId,
             role: 'assistant',
             content: responseText,
-            thinking: thinkingText
+            thinking: thinkingText,
+            isLoading: false,
+            isThinking: false,
+            thinkingCollapsed: true,
+            thinkingStartTime,
+            thinkingEndTime: thinkingEndTime || Date.now()
           };
 
           const updatedMessages = [...messages, userMessage, assistantMessage];
@@ -828,7 +842,7 @@ export default function Dashboard() {
                         : "text-green-500/70 dark:text-green-400/70 animate-pulse"
                     )} />
                     <span className="font-medium text-gray-600 dark:text-gray-300">
-                      {msg.isThinking ? 'thinking...' : msg.thinkingEndTime && msg.thinkingStartTime ? `Thought completed (${((msg.thinkingEndTime - msg.thinkingStartTime) / 1000).toFixed(1)}s)` : 'thinking'}
+                      {msg.isThinking ? 'thinking...' : msg.thinkingEndTime && msg.thinkingStartTime ? `Thought completed (${((msg.thinkingEndTime - msg.thinkingStartTime) / 1000).toFixed(1)}s)` : msg.thinking ? 'Thought' : 'thinking'}
                     </span>
                     {!msg.isThinking && (
                       <ChevronDown className={cn(

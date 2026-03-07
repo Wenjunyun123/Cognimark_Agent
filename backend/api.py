@@ -69,6 +69,7 @@ class CopyResponse(BaseModel):
 class ChatMessage(BaseModel):
     role: str  # 'user' or 'assistant'
     content: str
+    thinking: Optional[str] = None  # Agent 的思考过程
 
 class ChatRequest(BaseModel):
     message: str
@@ -178,7 +179,11 @@ def get_chat_history(session_id: Optional[str] = None):
     """获取历史对话记录"""
     if session_id and session_id in CHAT_SESSIONS:
         return [
-            ChatMessage(role=msg["role"], content=msg["content"])
+            ChatMessage(
+                role=msg["role"],
+                content=msg["content"],
+                thinking=msg.get("thinking")  # 返回 thinking 字段
+            )
             for msg in CHAT_SESSIONS[session_id]
         ]
     return []
@@ -327,7 +332,8 @@ def chat_with_agent(req: ChatRequest):
             assistant_msg_entry = {
                 "role": "assistant",
                 "content": response_text,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
+                "thinking": thinking_content  # 保存思考过程
             }
             if current_history is not None:
                 current_history.append(assistant_msg_entry)
@@ -567,7 +573,8 @@ async def chat_with_agent_stream(req: ChatRequest):
                 assistant_msg_entry = {
                     "role": "assistant",
                     "content": full_response,
-                    "timestamp": datetime.now().isoformat()
+                    "timestamp": datetime.now().isoformat(),
+                    "thinking": thinking_buffer if thinking_buffer else None  # 保存思考过程
                 }
                 if current_history is not None:
                     current_history.append(assistant_msg_entry)

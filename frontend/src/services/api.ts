@@ -36,6 +36,7 @@ export interface CopyResponse {
 export interface ChatMessage {
   role: string;
   content: string;
+  thinking?: string;
 }
 
 export interface ChatRequest {

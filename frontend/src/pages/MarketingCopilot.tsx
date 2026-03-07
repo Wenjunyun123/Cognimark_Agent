@@ -363,7 +363,7 @@ export default function MarketingCopilot() {
                         : "text-green-500/70 dark:text-green-400/70 animate-pulse"
                     )} />
                     <span className="font-medium text-gray-600 dark:text-gray-300">
-                      {msg.isThinking ? 'thinking...' : msg.thinkingEndTime && msg.thinkingStartTime ? `Thought completed (${((msg.thinkingEndTime - msg.thinkingStartTime) / 1000).toFixed(1)}s)` : 'thinking'}
+                      {msg.isThinking ? 'thinking...' : msg.thinkingEndTime && msg.thinkingStartTime ? `Thought completed (${((msg.thinkingEndTime - msg.thinkingStartTime) / 1000).toFixed(1)}s)` : msg.thinking ? 'Thought' : 'thinking'}
                     </span>
                     {!msg.isThinking && (
                       <ChevronDown className={cn(
