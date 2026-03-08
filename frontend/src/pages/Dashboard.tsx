@@ -1,9 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Send, Copy, ThumbsUp, Loader2, Sparkles, TrendingUp, Package, BarChart3, Upload, X, FileSpreadsheet, ArrowDown, ChevronDown } from 'lucide-react';
+import { Send, Copy, ThumbsUp, Loader2, Sparkles, TrendingUp, Package, BarChart3, Upload, X, FileSpreadsheet, ArrowDown, ChevronDown, Database, CheckCircle, AlertCircle } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { chatWithAgentStream, getProducts, uploadExcel, getUploadedFiles, deleteUploadedFile, getChatHistory, UploadedFile } from '../services/api';
+import { chatWithAgentStream, getProducts, uploadExcel, getUploadedFiles, deleteUploadedFile, getChatHistory, UploadedFile, importData } from '../services/api';
 import { SessionManager, ChatSession } from '../utils/sessionManager';
 import { cn } from '../utils/cn';
 
@@ -29,6 +29,9 @@ export default function Dashboard() {
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [currentUploadingFile, setCurrentUploadingFile] = useState<{name: string; size: number} | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importResult, setImportResult] = useState<ImportDataResponse | null>(null);
+  const [showImportResult, setShowImportResult] = useState(false);
   const [selectedMode, setSelectedMode] = useState<string>('normal'); // normal, market, selection, ads, conversion
   const [showModeMenu, setShowModeMenu] = useState(false);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
@@ -38,6 +41,7 @@ export default function Dashboard() {
   const [slashCommandIndex, setSlashCommandIndex] = useState(0);
   const modeMenuRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null); // 新增：消息末尾引用
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -190,6 +194,35 @@ export default function Dashboard() {
       setCurrentUploadingFile(null);
     } finally {
       setIsUploading(false);
+    }
+  };
+
+  // 导入数据到数据库
+  const handleImportData = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setIsImporting(true);
+    setImportResult(null);
+
+    try {
+      const result = await importData(file, true, false);
+      setImportResult(result);
+      setShowImportResult(true);
+      
+      // 3秒后自动隐藏结果
+      setTimeout(() => {
+        setShowImportResult(false);
+      }, 5000);
+      
+      // 清空文件输入
+      if (importInputRef.current) {
+        importInputRef.current.value = '';
+      }
+    } catch (error: any) {
+      alert(`导入失败: ${error.message}`);
+    } finally {
+      setIsImporting(false);
     }
   };
 
@@ -587,6 +620,28 @@ export default function Dashboard() {
               </div>
             )}
 
+            {/* 导入结果提示 */}
+            {showImportResult && importResult && (
+              <div className={`mb-3 px-1 ${importResult.status === 'completed' || importResult.status === 'partial_success' ? 'text-green-600' : 'text-red-600'}`}>
+                <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border ${
+                  importResult.status === 'completed' 
+                    ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' 
+                    : importResult.status === 'partial_success'
+                    ? 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800'
+                    : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
+                }`}>
+                  {importResult.status === 'completed' || importResult.status === 'partial_success' ? (
+                    <CheckCircle className="w-4 h-4" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4" />
+                  )}
+                  <span className="text-sm">
+                    导入完成：成功 {importResult.success_count} 条，失败 {importResult.failed_count} 条，跳过 {importResult.skipped_count} 条
+                  </span>
+                </div>
+              </div>
+            )}
+
             {/* 斜杠命令菜单 */}
             {showSlashMenu && (
               <div 
@@ -642,7 +697,7 @@ export default function Dashboard() {
                  <button 
                    onClick={() => fileInputRef.current?.click()}
                    className="w-9 h-9 flex items-center justify-center rounded-full bg-gray-200 dark:bg-gray-700/80 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors text-gray-600 dark:text-gray-400"
-                   title="上传 Excel/CSV 文件"
+                   title="上传 Excel/CSV 文件（仅预览分析）"
                    disabled={isUploading}
                  >
                     <Upload className="w-5 h-5" />
@@ -654,6 +709,28 @@ export default function Dashboard() {
                    onChange={handleFileUpload}
                    className="hidden"
                    disabled={isUploading}
+                 />
+
+                 {/* 导入数据库按钮 */}
+                 <button 
+                   onClick={() => importInputRef.current?.click()}
+                   className="w-9 h-9 flex items-center justify-center rounded-full bg-green-100 dark:bg-green-900/40 hover:bg-green-200 dark:hover:bg-green-900/60 transition-colors text-green-600 dark:text-green-400"
+                   title="导入 Excel/CSV 数据到数据库"
+                   disabled={isImporting}
+                 >
+                    {isImporting ? (
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                    ) : (
+                      <Database className="w-5 h-5" />
+                    )}
+                 </button>
+                 <input
+                   ref={importInputRef}
+                   type="file"
+                   accept=".xlsx,.xls,.csv"
+                   onChange={handleImportData}
+                   className="hidden"
+                   disabled={isImporting}
                  />
 
                  {/* 功能模式选择器 */}

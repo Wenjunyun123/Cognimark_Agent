@@ -279,3 +279,43 @@ export async function deleteUploadedFile(filename: string): Promise<void> {
     throw new Error('Failed to delete file');
   }
 }
+
+/**
+ * 导入数据到数据库
+ */
+export interface ImportDataResponse {
+  batch_id: string;
+  total_records: number;
+  success_count: number;
+  failed_count: number;
+  skipped_count: number;
+  status: string;
+  errors: string[];
+}
+
+export async function importData(
+  file: File,
+  skipDuplicates: boolean = true,
+  updateExisting: boolean = false,
+  batchName?: string
+): Promise<ImportDataResponse> {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('skip_duplicates', String(skipDuplicates));
+  formData.append('update_existing', String(updateExisting));
+  if (batchName) {
+    formData.append('batch_name', batchName);
+  }
+
+  const response = await fetch(`${API_BASE_URL}/import/data`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to import data');
+  }
+
+  return response.json();
+}
