@@ -4,6 +4,7 @@
 使用sentence-transformers生成文本嵌入
 """
 from typing import List, Union
+import os
 import numpy as np
 
 
@@ -32,8 +33,17 @@ class EmbeddingGenerator:
         if self._model is None:
             try:
                 from sentence_transformers import SentenceTransformer
-                print(f"Loading embedding model: {self.model_name}")
-                self._model = SentenceTransformer(self.model_name)
+
+                # 优先使用本地模型
+                base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                local_model_path = os.path.join(base_dir, "models", self.model_name)
+
+                if os.path.exists(local_model_path):
+                    print(f"Loading local embedding model: {local_model_path}")
+                    self._model = SentenceTransformer(local_model_path)
+                else:
+                    print(f"Loading embedding model: {self.model_name}")
+                    self._model = SentenceTransformer(self.model_name)
                 print(f"Model loaded successfully")
             except ImportError:
                 raise ImportError(

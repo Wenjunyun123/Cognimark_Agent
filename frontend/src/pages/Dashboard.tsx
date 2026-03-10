@@ -275,11 +275,40 @@ export default function Dashboard() {
             const existingMessages = session.messages || [];
             session.messages = backendHistory.map((msg: any, index: number) => {
               const existingMsg = existingMessages[index] || {};
+
+              // 兼容旧数据：检测 content 是否包含思考+回答的合并内容
+              let content = msg.content || '';
+              let thinking = msg.thinking || existingMsg.thinking || '';
+
+              // 如果 content 和 thinking 相同，或者 content 包含 [深度思考]，说明是旧合并格式
+              if (content && (content === thinking || (content.includes('[深度思考]') && !thinking))) {
+                // 尝试分离：查找 [回答] 部分作为回答内容
+                const answerMatch = content.match(/\[回答\]([\s\S]*)$/);
+                if (answerMatch && answerMatch[1].trim()) {
+                  // 分离出回答和思考
+                  const answer = answerMatch[1].trim();
+                  const thinkingPart = content.replace(/\[回答\][\s\S]*$/, '').replace('[深度思考]', '').trim();
+                  content = answer;
+                  thinking = thinkingPart;
+                } else if (content.startsWith('[深度思考]') || content.startsWith('首先') || content.startsWith('1. ')) {
+                  // 如果没有明确的 [回答] 标记，尝试找到回答开始的位置
+                  const responseStartPatterns = ['你好！', '以下是', '根据', '好的', '明白'];
+                  for (const pattern of responseStartPatterns) {
+                    const idx = content.indexOf(pattern);
+                    if (idx > 10) {
+                      thinking = content.substring(0, idx).replace(/^[\s\n]+/, '').replace(/[\s\n]+$/, '');
+                      content = content.substring(idx);
+                      break;
+                    }
+                  }
+                }
+              }
+
               return {
                 id: Math.random().toString(36).substr(2, 9),
                 role: msg.role,
-                content: msg.content,
-                thinking: msg.thinking || existingMsg.thinking,
+                content: content,
+                thinking: thinking,
                 thinkingStartTime: existingMsg.thinkingStartTime,
                 thinkingEndTime: existingMsg.thinkingEndTime
               };
