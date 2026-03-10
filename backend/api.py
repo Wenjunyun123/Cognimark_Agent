@@ -495,9 +495,23 @@ async def chat_with_agent_stream(req: ChatRequest):
             thinking_buffer = ""
             response_buffer = ""
 
-            # 分隔符模式（中文）
+            # 分隔符模式（中文）- 主要依赖这个
             thinking_start_pattern = "[深度思考]"
             answer_start_pattern = "[回答]"
+
+            # 回答开始的模式（当模型不按格式输出时的备选方案）
+            response_start_patterns = [
+                "[回答]",
+                "你好！",
+                "您好！",
+                "我是CogniMark",
+                "基于提供的",
+                "根据您",
+                "以下是我的",
+                "好的，",
+                "明白，",
+                "以下是"
+            ]
 
             # 延迟缓冲区 - 保存可能包含分隔符的内容
             # 缓冲区大小设置为50，确保能容纳分隔符（最长约21字符）
@@ -544,6 +558,20 @@ async def chat_with_agent_stream(req: ChatRequest):
                     # 保留标记之后的内容
                     pending_buffer = parts[1] if len(parts) > 1 else ""
                     continue
+
+                # 备用方案：如果在思考状态，检测常见的回答开始模式
+                if in_thinking:
+                    for pattern in response_start_patterns:
+                        if pattern in pending_buffer:
+                            parts = pending_buffer.split(pattern, 1)
+                            if parts[0].strip():
+                                yield send_content(parts[0], True)
+                            yield f"event: thinking_done\ndata: {{}}\n\n"
+                            in_thinking = False
+                            pending_buffer = pattern + (parts[1] if len(parts) > 1 else "")
+                            break
+                    if not in_thinking:
+                        continue
 
                 # 如果缓冲区太长，且没有检测到分隔符，则发送内容
                 # 保留最后BUFFER_SIZE个字符用于跨chunk检测
