@@ -552,8 +552,11 @@ async def chat_with_agent_stream(req: ChatRequest):
                     pending_buffer = pending_buffer[-BUFFER_SIZE:]
 
                     if send_now:
-                        thinking_buffer += send_now
-                        response_buffer += send_now
+                        # 只根据当前状态添加到对应的buffer
+                        if in_thinking:
+                            thinking_buffer += send_now
+                        else:
+                            response_buffer += send_now
                         yield send_content(send_now, in_thinking)
                         await asyncio.sleep(0.01)
 
@@ -562,6 +565,11 @@ async def chat_with_agent_stream(req: ChatRequest):
                 pending_escaped = pending_buffer.replace('\n', '\\n').replace('"', '\\"')
                 event_type = "thinking" if in_thinking else "response"
                 yield f"event: {event_type}\ndata: {{\"content\": \"{pending_escaped}\"}}\n\n"
+                # 根据状态添加到对应的buffer
+                if in_thinking:
+                    thinking_buffer += pending_buffer
+                else:
+                    response_buffer += pending_buffer
 
             # 如果仍在思考中，发送思考完成事件
             if in_thinking:
