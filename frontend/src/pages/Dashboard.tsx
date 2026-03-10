@@ -281,7 +281,7 @@ export default function Dashboard() {
               let thinking = msg.thinking || existingMsg.thinking || '';
 
               // 如果 content 和 thinking 相同，或者 content 包含 [深度思考]，说明是旧合并格式
-              if (content && (content === thinking || (content.includes('[深度思考]') && !thinking))) {
+              if (content && (content === thinking || (content.includes('[深度思考]') && !thinking) || (!thinking && (content.startsWith('首先') || content.startsWith('1. ') || content.startsWith('\\n首先'))))) {
                 // 尝试分离：查找 [回答] 部分作为回答内容
                 const answerMatch = content.match(/\[回答\]([\s\S]*)$/);
                 if (answerMatch && answerMatch[1].trim()) {
@@ -290,8 +290,29 @@ export default function Dashboard() {
                   const thinkingPart = content.replace(/\[回答\][\s\S]*$/, '').replace('[深度思考]', '').trim();
                   content = answer;
                   thinking = thinkingPart;
+                } else if (content.includes('我是CogniMark') || content.includes('您好！') || content.includes('基于提供的') || content.startsWith('你好') || content.startsWith('以下')) {
+                  // 检测回答开始的位置 - 更精确的模式
+                  const responseStartPatterns = [
+                    '我是CogniMark',
+                    '您好！欢迎',
+                    '基于提供的商品信息',
+                    '你好！',
+                    '以下是我的',
+                    '根据您',
+                    '好的，',
+                    '明白，',
+                    '以下是'
+                  ];
+                  for (const pattern of responseStartPatterns) {
+                    const idx = content.indexOf(pattern);
+                    if (idx > 10 && idx < content.length - 50) {
+                      thinking = content.substring(0, idx).replace(/^[\s\n]+/, '').replace(/[\s\n]+$/, '');
+                      content = content.substring(idx);
+                      break;
+                    }
+                  }
                 } else if (content.startsWith('[深度思考]') || content.startsWith('首先') || content.startsWith('1. ')) {
-                  // 如果没有明确的 [回答] 标记，尝试找到回答开始的位置
+                  // 如果没有明确的标记，尝试找到回答开始的位置
                   const responseStartPatterns = ['你好！', '以下是', '根据', '好的', '明白'];
                   for (const pattern of responseStartPatterns) {
                     const idx = content.indexOf(pattern);
