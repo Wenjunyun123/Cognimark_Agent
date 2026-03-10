@@ -72,6 +72,7 @@ class ChatHistoryDB(Base):
     session_id = Column(String(100), nullable=False, index=True)
     role = Column(String(20), nullable=False)  # 'user' or 'assistant'
     content = Column(Text, nullable=False)
+    thinking = Column(Text, nullable=True)  # 思考过程内容
     timestamp = Column(DateTime, default=datetime.utcnow, index=True)
 
     # 添加复合索引优化查询
@@ -86,6 +87,7 @@ class ChatHistoryDB(Base):
             "session_id": self.session_id,
             "role": self.role,
             "content": self.content,
+            "thinking": self.thinking,
             "timestamp": self.timestamp.isoformat() if self.timestamp else None,
         }
 

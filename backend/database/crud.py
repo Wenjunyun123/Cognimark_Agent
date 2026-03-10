@@ -91,7 +91,8 @@ class ChatHistoryCRUD:
         self,
         session_id: str,
         role: str,
-        content: str
+        content: str,
+        thinking: str = None
     ) -> ChatHistoryDB:
         """创建新消息"""
         message = ChatHistoryDB(
@@ -99,6 +100,7 @@ class ChatHistoryCRUD:
             session_id=session_id,
             role=role,
             content=content,
+            thinking=thinking,
             timestamp=datetime.utcnow()
         )
         self.session.add(message)

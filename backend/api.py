@@ -569,12 +569,11 @@ async def chat_with_agent_stream(req: ChatRequest):
 
             # 保存完整对话到历史
             if session_id and not session_id.startswith('temp_'):
-                full_response = thinking_buffer + response_buffer
                 assistant_msg_entry = {
                     "role": "assistant",
-                    "content": full_response,
+                    "content": response_buffer,  # 只保存回答内容，不包含思考过程
                     "timestamp": datetime.now().isoformat(),
-                    "thinking": thinking_buffer if thinking_buffer else None  # 保存思考过程
+                    "thinking": thinking_buffer if thinking_buffer else None  # 单独保存思考过程
                 }
                 if current_history is not None:
                     current_history.append(assistant_msg_entry)
