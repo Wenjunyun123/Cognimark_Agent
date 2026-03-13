@@ -463,41 +463,35 @@ async def chat_with_agent_stream(req: ChatRequest):
                         "content": msg.content
                     })
 
-            # 使用 CoT prompting 让模型展示真实思考过程（中文）
-            # 使用特殊分隔符
-            cot_system_prompt = system_prompt + "\n\n重要提示：在回答之前，你必须展示你的思考过程。请严格按照以下格式：\n\n[深度思考]\n首先，分析用户的问题...\n然后，考虑上下文信息...\n最后，确定回答方案...\n\n[回答]\n现在提供你的清晰、简洁的回答。"
+            # 使用 CoT prompting - 简洁版，用标签分隔思考和回答
+            cot_system_prompt = system_prompt + """
 
-            # 构建最终提示，强制要求显示思考过程（中文）
-            final_prompt = f"""请逐步展示你的思考过程，然后给出最终回答。
+回答格式：
+<thinking>
+[在此处展示你的推理过程]
+</thinking>
+<answer>
+[在此处给出最终回答]
+</answer>"""
 
-"""
+            # 构建最终提示
+            final_prompt = ""
             if req.context:
                 final_prompt += f"上下文: {req.context}\n\n"
             if uploaded_data_context:
                 final_prompt += f"可用数据: {uploaded_data_context}\n\n"
             if database_context:
                 final_prompt += f"{database_context}\n\n"
-            final_prompt += f"用户问题: {user_message}\n\n"""
-
-            final_prompt += """重要格式要求：
-你必须按照以下结构回答：
-
-[深度思考]
-[在此处逐步展示你的推理过程 - 分析问题、考虑可用信息、规划回答策略]
-
-[回答]
-[在此处给出你的清晰回答]
-
-思考过程应该详细，展示你的真实推理逻辑。请用中文进行思考。"""
+            final_prompt += f"用户问题: {user_message}"
 
             # 流式调用，使用延迟发送策略检测分隔符
             in_thinking = False
             thinking_buffer = ""
             response_buffer = ""
 
-            # 分隔符模式（中文）
-            thinking_start_pattern = "[深度思考]"
-            answer_start_pattern = "[回答]"
+            # 分隔符模式
+            thinking_start_pattern = "<thinking>"
+            answer_start_pattern = "<answer>"
 
             # 延迟缓冲区 - 保存可能包含分隔符的内容
             # 缓冲区大小设置为50，确保能容纳分隔符（最长约21字符）
@@ -525,6 +519,7 @@ async def chat_with_agent_stream(req: ChatRequest):
                     parts = pending_buffer.split(thinking_start_pattern, 1)
                     if parts[0].strip():
                         yield send_content(parts[0], False)
+                        response_buffer += parts[0]  # 添加到回答 buffer
                     # 标记思考开始
                     yield f"event: thinking_start\ndata: {{}}\n\n"
                     in_thinking = True
@@ -538,6 +533,7 @@ async def chat_with_agent_stream(req: ChatRequest):
                     parts = pending_buffer.split(answer_start_pattern, 1)
                     if parts[0].strip():
                         yield send_content(parts[0], True)
+                        thinking_buffer += parts[0]  # 添加到思考 buffer
                     # 标记思考完成
                     yield f"event: thinking_done\ndata: {{}}\n\n"
                     in_thinking = False
@@ -552,8 +548,11 @@ async def chat_with_agent_stream(req: ChatRequest):
                     pending_buffer = pending_buffer[-BUFFER_SIZE:]
 
                     if send_now:
-                        thinking_buffer += send_now
-                        response_buffer += send_now
+                        # 只根据当前状态填充对应的 buffer
+                        if in_thinking:
+                            thinking_buffer += send_now
+                        else:
+                            response_buffer += send_now
                         yield send_content(send_now, in_thinking)
                         await asyncio.sleep(0.01)
 
@@ -562,6 +561,11 @@ async def chat_with_agent_stream(req: ChatRequest):
                 pending_escaped = pending_buffer.replace('\n', '\\n').replace('"', '\\"')
                 event_type = "thinking" if in_thinking else "response"
                 yield f"event: {event_type}\ndata: {{\"content\": \"{pending_escaped}\"}}\n\n"
+                # 剩余内容也只添加到对应 buffer
+                if in_thinking:
+                    thinking_buffer += pending_buffer
+                else:
+                    response_buffer += pending_buffer
 
             # 如果仍在思考中，发送思考完成事件
             if in_thinking:
@@ -569,10 +573,9 @@ async def chat_with_agent_stream(req: ChatRequest):
 
             # 保存完整对话到历史
             if session_id and not session_id.startswith('temp_'):
-                full_response = thinking_buffer + response_buffer
                 assistant_msg_entry = {
                     "role": "assistant",
-                    "content": full_response,
+                    "content": response_buffer,  # 只保存回答内容
                     "timestamp": datetime.now().isoformat(),
                     "thinking": thinking_buffer if thinking_buffer else None  # 保存思考过程
                 }

@@ -3,8 +3,16 @@
 
 使用sentence-transformers生成文本嵌入
 """
+import os
 from typing import List, Union
 import numpy as np
+
+# 本地模型路径
+LOCAL_MODEL_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "models",
+    "paraphrase-multilingual-MiniLM-L12-v2"
+)
 
 
 class EmbeddingGenerator:
@@ -14,17 +22,19 @@ class EmbeddingGenerator:
     使用sentence-transformers模型生成文本向量
     """
 
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
+    def __init__(self, model_name: str = None):
         """
         初始化嵌入生成器
 
         Args:
-            model_name: 模型名称
-                - "all-MiniLM-L6-v2": 快速，质量好（默认）
+            model_name: 模型名称或本地路径
+                - 不传参时使用本地模型
+                - "all-MiniLM-L6-v2": 快速，质量好
                 - "all-mpnet-base-v2": 质量更高，速度较慢
                 - "paraphrase-multilingual-MiniLM-L12-v2": 支持多语言
         """
-        self.model_name = model_name
+        # 默认使用本地模型
+        self.model_name = model_name if model_name else LOCAL_MODEL_PATH
         self._model = None
 
     def _load_model(self):
@@ -176,5 +186,5 @@ def get_default_generator() -> EmbeddingGenerator:
     """获取默认的嵌入生成器（单例）"""
     global _default_generator
     if _default_generator is None:
-        _default_generator = EmbeddingGenerator()
+        _default_generator = EmbeddingGenerator()  # 默认使用本地模型
     return _default_generator

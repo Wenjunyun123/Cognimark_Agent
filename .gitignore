@@ -22,6 +22,9 @@ frontend/dist/
 frontend/.env.local
 frontend/.env.production
 
+# 后端
+backend/models
+
 # 日志
 *.log
 

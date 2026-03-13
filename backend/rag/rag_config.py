@@ -77,8 +77,8 @@ KEYWORD_BOOST_SCORE = 2.0
 import os
 VECTOR_DB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "chroma_db_universal")
 
-# 嵌入模型（可选: "all-MiniLM-L6-v2", "paraphrase-multilingual-MiniLM-L12-v2"支持中文）
-EMBEDDING_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"  # 支持中英文
+# 嵌入模型 - 使用本地模型
+EMBEDDING_MODEL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models", "paraphrase-multilingual-MiniLM-L12-v2")
 
 # ==================== 辅助函数 ====================
 
